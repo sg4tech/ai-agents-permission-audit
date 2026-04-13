@@ -80,12 +80,19 @@ def matches(cmd: str, pattern: str) -> bool:
     Supports:
     - Glob patterns with ``*`` (operator-aware, quote-aware)
     - Colon-style patterns from global settings (``git log:*``)
+    - Exact patterns without ``*``: prefix-match semantics —
+      ``git status`` matches ``git status`` and ``git status --long``
     """
     # Colon-style: "git log:*" matches "git log" and "git log --oneline".
     if ":" in pattern and not pattern.startswith("/"):
         prefix, suffix = pattern.split(":", 1)
         if suffix == "*":
             return cmd == prefix or cmd.startswith(prefix + " ")
+
+    # Exact pattern (no wildcard): Claude Code uses prefix matching.
+    if "*" not in pattern:
+        masked = _mask_quoted_operators(cmd)
+        return masked == pattern or masked.startswith(pattern + " ")
 
     return bool(glob_to_regex(pattern).match(_mask_quoted_operators(cmd)))
 
