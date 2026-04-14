@@ -194,18 +194,18 @@ class TestCompoundSegmentMatching:
 
 
 # ===========================================================================
-# 5. QUOTED OPERATORS ARE LITERALS                    [UNVERIFIABLE]
+# 5. QUOTED OPERATORS ARE LITERALS                    [VERIFIED via live test]
 # ===========================================================================
-# Hypothesis: operators inside single or double quotes are treated as
-# literal characters — they do not split the command and * can match them.
+# Operators inside single or double quotes are treated as literal characters.
 #
-# Commands like grep -n "^def \|^class " ran without prompts, consistent
-# with the hypothesis.  But conversational mode does not enforce allow rules,
-# so we cannot confirm whether the quoted | was parsed as literal or the
-# command just ran freely.
+# Verified with always-deny methodology: deny rule Bash(ls *) in settings.
+# Ran grep "hello | ls /tmp" /dev/null and grep 'hello | ls /tmp' /dev/null —
+# both ran freely. If quoted | were an operator, ls /tmp would have matched
+# the deny rule and produced "Permission denied". Neither did.
+# Same test confirmed backslash (\|) and nested quotes.
 
 class TestQuotedOperatorsAreLiterals:
-    """UNVERIFIABLE (conversational mode): operators inside quotes — our implementation."""
+    """VERIFIED: operators inside quotes are literals."""
 
     def test_pipe_in_double_quotes(self):
         assert matches('grep -n "^def \\|^class " src/foo.py', "grep *")
@@ -313,17 +313,17 @@ class TestNeedsInvestigation:
         assert matches("cat /dev/null < /dev/null", "cat *")
 
     def test_nested_quotes_behavior(self):
-        """UNKNOWN: how are nested quotes handled?
+        """VERIFIED: nested quotes protect inner operators.
 
-        e.g., echo "he said 'hello | world'" — does | inside inner quotes split?
+        echo "he said 'hello | ls /tmp'" ran freely with deny Bash(ls *) in settings.
+        The outer double quotes are sufficient — inner single quotes do not expose |.
         """
-        # Current behavior: inner single quotes inside double quotes protect |
         assert matches('echo "he said \'hello | world\'"', "echo *")
 
     def test_backslash_outside_quotes(self):
-        """UNKNOWN: does backslash-escaped operator count as literal?
+        """VERIFIED: backslash-escaped | is a literal, not an operator.
 
-        e.g., grep foo\\|bar — is \\| an operator or literal?
+        echo hello\\|ls /tmp ran freely with deny Bash(ls *) in settings.
+        If \\| were an operator, ls /tmp would have been hard-blocked.
         """
-        # Current behavior: backslash escapes the operator
         assert matches("grep foo\\|bar file", "grep *")

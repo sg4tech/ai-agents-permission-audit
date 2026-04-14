@@ -121,21 +121,19 @@ for the whole compound command.
 
 ## 5. Operators inside quotes are literals
 
-**Status:** ⚠️ UNVERIFIABLE (methodology flaw — see note below)
+**Status:** ✅ VERIFIED
 
-**What we observed:**
-- `grep -n "^def \|^class " src/...` ran without prompt (double-quoted `|`)
-- `grep -c '^def \|^class ' src/...` ran without prompt (single-quoted `|`)
-- These are consistent with the hypothesis.
+**How verified (always-deny methodology):**
+Added `deny: ["Bash(ls *)"]` to local settings. Ran commands where a `|` inside
+quotes is followed by `ls /tmp` — if the quoted `|` were treated as an operator,
+`ls /tmp` would match the deny rule and produce "Permission denied". Instead all
+commands ran freely:
 
-**Why this does NOT confirm the hypothesis:**
-Conversational mode does not enforce allow rules. The commands likely ran freely
-regardless of whether the quoted `|` was parsed correctly. We cannot distinguish
-"quoted operator is literal → single segment → matches `grep *`" from "conversational
-mode ignores allow rules → runs freely".
+- `grep "hello | ls /tmp" /dev/null` — double-quoted `|` → ran freely ✅
+- `grep 'hello | ls /tmp' /dev/null` — single-quoted `|` → ran freely ✅
 
-**To verify properly:** Requires agentic mode test OR a negative test where a
-mis-parsed command would produce a string that definitely doesn't match any rule.
+**Conclusion:** `|` inside double or single quotes is treated as a literal character.
+The command is a single segment; `ls /tmp` is never evaluated as a separate command.
 
 ---
 
@@ -197,29 +195,34 @@ without a permission prompt. Conclusion: `<` is NOT an operator in Claude Code.
 
 ### 8b. Backslash-escaped operators outside quotes
 
-**Status:** ⚠️ UNVERIFIABLE (methodology flaw)
+**Status:** ✅ VERIFIED
 
-**Question:** Does `grep foo\|bar` treat `\|` as a literal pipe or as an operator?
+**Question:** Does `echo hello\|ls /tmp` treat `\|` as a literal or as an operator?
 
-**What we observed:**
-`grep -c foo\|bar src/...` ran without prompt.  Consistent with backslash escaping.
+**How verified (always-deny methodology):**
+Added `deny: ["Bash(ls *)"]` to local settings. Ran `echo hello\|ls /tmp` —
+if `\|` were an operator, `ls /tmp` would match the deny rule → "Permission denied".
+Instead the command ran freely and printed `hello|ls /tmp`.
 
-**Why unverifiable:** Conversational mode does not enforce allow rules for most
-commands.  Cannot distinguish "backslash escape works" from "ran freely".
+**Conclusion:** Backslash-escaped `|` is treated as a literal character, not an operator.
 
 ---
 
 ### 8c. Nested quotes
 
-**Status:** ⚠️ UNVERIFIABLE (methodology flaw)
+**Status:** ✅ VERIFIED
 
-**Question:** In `echo "he said 'hello | world'"`, does the inner `|` split the command?
+**Question:** In `echo "he said 'hello | ls /tmp'"`, does the inner `|` split the command?
 
-**What we observed:**
-`echo "he said 'hello | world'"` ran without prompt.  Consistent with nested
-quotes protecting the operator.
+**How verified (always-deny methodology):**
+Added `deny: ["Bash(ls *)"]` to local settings. Ran two nested-quote variants —
+if the inner `|` were an operator, `ls /tmp` would trigger "Permission denied":
 
-**Why unverifiable:** Same as 8b — conversational mode does not enforce allow rules.
+- `echo "he said 'hello | ls /tmp'"` (double outer, single inner) → ran freely ✅
+- `echo 'he said "hello | ls /tmp"'` (single outer, double inner) → ran freely ✅
+
+**Conclusion:** Nested quotes protect inner operators. The outer quote level is
+sufficient — inner quotes do not "break out" to expose the `|` as an operator.
 
 ---
 
