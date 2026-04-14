@@ -58,22 +58,17 @@ def _mask_quoted_operators(cmd: str) -> str:
 
 
 # Regex fragment for ``*``: matches any character sequence that does NOT
-# contain shell operators, does NOT start with ``/``, and where any ``/``
-# in the matched sequence must be immediately followed by a space or
-# end-of-string (i.e. a trailing slash on a directory argument).
+# contain shell operators and does NOT start with ``/``.
+# Internal ``/`` characters are allowed — only a leading ``/`` is blocked.
 #
 # VERIFIED:
-#   ``*`` does NOT match a leading ``/``:
-#     ``Bash(cat *)`` covers ``cat file.txt`` but NOT ``cat /etc/hosts``.
-#   ``*`` does NOT cross ``/`` mid-path:
-#     ``Bash(.venv/bin/*)`` covers ``.venv/bin/pytest`` but NOT ``.venv/bin/sub/pytest``.
-#   ``*`` does NOT match ``/`` inside a redirect target ``2>/dev/null``
-#     because ``d`` follows the slash (not a space).
-#   ``*`` DOES match a trailing ``/`` on a directory argument:
+#   ``*`` does NOT match a leading ``/`` (absolute paths):
+#     ``Bash(cat *)`` covers ``cat README.md`` but NOT ``cat /etc/hosts``.
+#   ``*`` DOES match paths with internal slashes as long as they do not start with ``/``:
 #     ``Bash(.venv/bin/* *)`` auto-approved ``.venv/bin/pytest tests/ -q 2>&1``
-#     (verified via always-deny in a fresh session — no dialog, immediate
-#     hard-block from the deny rule, confirming the allow rule fired first).
-_STAR = r"(?!/)(?:(?!&&|\|\||[|;])[^/]|(?<=\S)/(?= |$))*"
+#     ``Bash(cat *)`` auto-approved ``cat src/permission_audit/claude_glob.py | wc -l``
+#     Both verified via always-deny (immediate hard-block, no dialog).
+_STAR = r"(?!/)(?:(?!&&|\|\||[|;]).)*"
 
 # Regex fragment for ``**``: matches any character sequence that does NOT
 # contain shell operators (slashes are allowed).

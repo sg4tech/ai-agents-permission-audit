@@ -225,21 +225,21 @@ class TestCheckCommand:
         assert not ok
         assert "DENY" in reason
 
-    def test_deny_nested_path_requires_double_star(self):
-        """rm -rf /** catches nested paths; rm -rf /* does not (no slash in *).
+    def test_deny_star_catches_relative_nested_path(self):
+        """rm -rf /* catches rm -rf /tmp/subdir because * matches 'tmp/subdir'.
 
-        This documents a real footgun: deny rule writers who use rm -rf /* expect
-        to block ALL absolute recursive deletes, but * does not match /, so
-        rm -rf /tmp/subdir would return NO_MATCH with rm -rf /* and be silently
-        allowed if there is a matching allow rule. Use rm -rf /** to catch all.
+        * blocks only a leading /. In 'rm -rf /*', the literal prefix is
+        'rm -rf /', so * is applied to 'tmp/subdir' which has no leading / —
+        * matches it.  Use rm -rf /** when the argument itself may start with /.
         """
         # Double-star deny (our DENY constant): catches nested path.
         ok, reason = check_command("rm -rf /tmp/subdir", self.DENY, ["rm **"], [])
         assert not ok
         assert "DENY" in reason
-        # Single-star deny: does NOT catch nested path — silently passes through.
-        ok, _ = check_command("rm -rf /tmp/subdir", ["rm -rf /*"], ["rm **"], [])
-        assert ok  # dangerous: deny missed the nested path
+        # Single-star deny also catches nested path (tmp/subdir has no leading /).
+        ok, reason = check_command("rm -rf /tmp/subdir", ["rm -rf /*"], ["rm **"], [])
+        assert not ok
+        assert "DENY" in reason
 
     def test_2_redirect_allowed(self):
         ok, _ = check_command("make verify 2>&1", self.DENY, self.ALLOW, [])

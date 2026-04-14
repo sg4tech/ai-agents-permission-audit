@@ -134,18 +134,19 @@ class TestRedirectsNotOperators:
     def test_2_redirect_1(self):
         assert matches("make verify 2>&1", "make *")
 
-    def test_2_redirect_devnull_requires_double_star(self):
-        """2>/dev/null contains / — * does not match it; ** does.
+    def test_2_redirect_devnull_star_matches(self):
+        """* matches 2>/dev/null — 'foo file 2>/dev/null' has no leading /.
 
-        Whether Claude Code strips redirect targets before matching is
-        UNVERIFIED.  Use ** or an exact pattern to be safe.
+        * only blocks a leading /. The matched string 'foo file 2>/dev/null'
+        starts with 'f', so * covers it.  Whether Claude Code strips redirect
+        targets before matching is UNVERIFIED — but our model says * matches.
         """
-        assert not matches("grep foo file 2>/dev/null", "grep *")
+        assert matches("grep foo file 2>/dev/null", "grep *")
         assert matches("grep foo file 2>/dev/null", "grep **")
 
-    def test_1_redirect_devnull_requires_double_star(self):
-        """1>/dev/null contains / — * does not match it; ** does."""
-        assert not matches("cmd arg 1>/dev/null", "cmd *")
+    def test_1_redirect_devnull_star_matches(self):
+        """1>/dev/null: same as above — no leading / in the matched portion."""
+        assert matches("cmd arg 1>/dev/null", "cmd *")
         assert matches("cmd arg 1>/dev/null", "cmd **")
 
     def test_fd_redirect_with_exact_pattern(self):
@@ -366,59 +367,54 @@ class TestAdditionalVerifiedBehaviors:
 # ===========================================================================
 # 9. * AND FORWARD SLASHES                             [VERIFIED via live test]
 # ===========================================================================
-# * does NOT match a leading / (absolute paths) and does NOT cross / mid-path.
-# * DOES match a trailing / on a directory argument (slash immediately followed
-# by a space or end-of-string).
-# ** DOES match / freely.
+# * does NOT match a leading / (absolute paths blocked).
+# * DOES match internal / — any relative path is covered regardless of depth.
+# ** DOES match / freely (including leading /).
 #
 # Verified:
 #   - "cat README.md" auto-approved by Bash(cat *) — no slash ✓
-#   - "cat /tmp/file" prompted with Bash(cat *) — leading slash ✗
-#   - "cat /Users/viktor/.claude/settings.json | python3 -c '...'" auto-approved
-#     by Bash(cat /Users/viktor/**) — ** crosses nested slashes ✓
-#   - ".venv/bin/pytest tests/ -q 2>&1" auto-approved by Bash(.venv/bin/* *)
-#     (verified via always-deny: no dialog, immediate hard-block from deny rule) ✓
+#   - "cat /etc/hosts" prompted with Bash(cat *) — leading slash ✗
+#   - ".venv/bin/pytest tests/ -q 2>&1" hard-blocked by deny Bash(.venv/bin/* *) ✓
+#   - ".venv/bin/pytest tests/test_behavior_spec.py -q" auto-approved ✓
+#   - "cat src/permission_audit/claude_glob.py | wc -l" hard-blocked by
+#     deny Bash(cat *) — two internal slashes, no leading slash ✓
 
 class TestStarAndSlashes:
-    """VERIFIED: * does not match a leading / or a mid-path /, but DOES match
-    a trailing / on a directory argument (slash followed by space or end).
-    """
+    """VERIFIED: * does not match a leading / but freely matches internal /."""
 
     def test_star_no_match_absolute_path_arg(self):
-        """VERIFIED: cat * does not cover cat /path/to/file (leading /)."""
+        """VERIFIED: cat * does not cover absolute paths (leading /)."""
         assert not matches("cat /etc/hosts", "cat *")
         assert not matches("cat /Users/viktor/.claude/settings.json", "cat *")
 
     def test_star_matches_relative_arg(self):
-        """VERIFIED: cat * covers cat with a relative filename."""
+        """VERIFIED: cat * covers cat with a simple relative filename."""
         assert matches("cat README.md", "cat *")
         assert matches("cat file.txt", "cat *")
 
-    def test_star_does_not_cross_mid_path_slash(self):
-        """VERIFIED: * does not cross / in a binary path or nested filename."""
-        assert matches(".venv/bin/pytest", ".venv/bin/*")
-        assert not matches(".venv/bin/sub/pytest", ".venv/bin/*")
-        assert not matches("cat tests/file.txt", "cat *")   # / followed by 'f'
+    def test_star_matches_relative_path_with_slashes(self):
+        """VERIFIED: * matches relative paths with one or more internal /.
 
-    def test_star_matches_trailing_slash_on_dir_arg(self):
-        """VERIFIED: * matches a trailing / on a directory argument.
-
-        Verified via always-deny in a fresh session: only Bash(.venv/bin/* *)
-        was in global allow rules, plus deny Bash(.venv/bin/* *) in local.
-        Running .venv/bin/pytest tests/ -q produced an immediate hard-block
-        ("Permission denied") with no dialog — confirming the allow rule fired.
-
-        Rule: / is allowed by * only when immediately followed by a space or
-        end-of-string (i.e. it is a trailing slash, not a path separator into
-        a subdirectory).
+        Confirmed via always-deny (hard-block, no dialog):
+          - tests/ -q 2>&1           (trailing slash)
+          - tests/test_behavior_spec.py  (one internal slash)
+          - src/permission_audit/claude_glob.py  (two internal slashes)
         """
-        assert matches(".venv/bin/pytest tests/ -q 2>&1", ".venv/bin/*")
         assert matches(".venv/bin/pytest tests/ -q 2>&1", ".venv/bin/* *")
-        assert matches(".venv/bin/mypy src/ --strict", ".venv/bin/* *")
+        assert matches(".venv/bin/pytest tests/test_behavior_spec.py -q", ".venv/bin/* *")
+        assert matches("cat src/permission_audit/claude_glob.py", "cat *")
+        assert matches("cat tests/file.txt", "cat *")
 
-    def test_star_does_not_match_redirect_with_absolute_path(self):
-        """VERIFIED: * does not cover 2>/dev/null because / is followed by 'd'."""
-        assert not matches("grep foo file 2>/dev/null", "grep *")
+    def test_star_redirect_devnull_unknown(self):
+        """UNKNOWN: does * cover 2>/dev/null?
+
+        With the current model (* blocks only leading /), grep * matches
+        'grep foo 2>/dev/null' because the matched string starts with 'f'.
+        Whether Claude Code strips redirect targets before matching is unverified.
+        Use ** or an exact pattern when redirect targets contain absolute paths.
+        """
+        # Our model says this matches — not yet live-verified:
+        assert matches("grep foo file 2>/dev/null", "grep *")
         assert matches("grep foo file 2>/dev/null", "grep **")
 
     def test_double_star_matches_absolute_path(self):

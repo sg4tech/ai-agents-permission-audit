@@ -280,14 +280,20 @@ Also verified the compound positive case using always-deny methodology:
 `git status | python3 -c "print(1)"` — executed without prompt (both segments covered:
 `git status:*` and `python3:*`).
 
-**Conclusion:** `*` in Bash permission patterns matches any character sequence **except
-`/`**. This mirrors standard glob semantics. To cover commands with absolute paths,
-use `**` (see §10) or an explicit prefix pattern (e.g. `Bash(cat /tmp/*)`).
+**Conclusion:** `*` in Bash permission patterns blocks only a **leading `/`** (i.e.
+arguments that start with `/`).  Internal slashes — including paths like
+`tests/file.py`, `src/foo/bar.py`, or redirect targets like `2>/dev/null` — are
+matched by `*` as long as the matched sequence does not start with `/`.
 
-**Impact on redirect targets:** Whether Claude Code strips redirect targets (e.g.
-`> /dev/null`) before glob matching is **unverified**. Conservatively, use `**` or
-exact patterns when redirect targets contain absolute paths. `2>&1` has no slash
-and is safely covered by `*`.
+**Additional verification (always-deny):**
+- `cat src/permission_audit/claude_glob.py | wc -l` hard-blocked by deny `Bash(cat *)` —
+  two internal slashes, no leading slash → `*` matched ✓
+
+**Impact on redirect targets:** `grep foo 2>/dev/null` is matched by `Bash(grep *)`
+in our model (matched portion `foo 2>/dev/null` starts with `f`). Whether Claude Code
+strips redirect targets before matching is still unverified, but our model now says
+`*` covers them. Use `**` or an exact pattern only if you need to match the redirect
+target itself as part of the pattern.
 
 ---
 
@@ -363,8 +369,8 @@ end-of-string — i.e. a **trailing slash on a directory argument** (e.g. `tests
 `*` does NOT match `/` in other positions (leading slash, mid-path separator,
 or slash before a non-space character like in `2>/dev/null`).
 
-**Implementation updated:** `_STAR` in `claude_glob.py` now uses
-`(?!/)(?:(?!&&|\|\||[|;])[^/]|(?<=\S)/(?= |$))*`.
+**Implementation updated:** `_STAR` in `claude_glob.py` uses
+`(?!/)(?:(?!&&|\|\||[|;]).)*` — blocks leading `/` only, allows all internal `/`.
 
 ---
 

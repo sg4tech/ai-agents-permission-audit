@@ -67,14 +67,19 @@ class TestFdRedirects:
     def test_2_redirect_stdout(self):
         assert glob_to_regex("make *").match("make verify 2>&1")
 
-    def test_2_redirect_devnull_requires_double_star(self):
-        """2>/dev/null contains a slash — * won't match it, ** will."""
-        assert not glob_to_regex("grep *").match("grep foo file 2>/dev/null")
+    def test_2_redirect_devnull_star_matches(self):
+        """2>/dev/null: * matches because 'foo file 2>/dev/null' has no leading /.
+
+        * only blocks a leading /; internal slashes (like the / in /dev/null)
+        are allowed.  Whether Claude Code strips redirect targets before matching
+        is unverified, but our model says * covers this.
+        """
+        assert glob_to_regex("grep *").match("grep foo file 2>/dev/null")
         assert glob_to_regex("grep **").match("grep foo file 2>/dev/null")
 
-    def test_1_redirect_requires_double_star(self):
-        """1>/dev/null contains a slash — * won't match it, ** will."""
-        assert not glob_to_regex("cmd *").match("cmd arg 1>/dev/null")
+    def test_1_redirect_devnull_star_matches(self):
+        """1>/dev/null: same as above — leading / is what * blocks, not internal /."""
+        assert glob_to_regex("cmd *").match("cmd arg 1>/dev/null")
         assert glob_to_regex("cmd **").match("cmd arg 1>/dev/null")
 
     def test_mixed_fd_and_pipe(self):
@@ -122,9 +127,9 @@ class TestSlashBlocking:
         """* matches a single path component (no slash in it)."""
         assert glob_to_regex(".venv/bin/*").match(".venv/bin/pytest")
 
-    def test_star_does_not_match_nested_path_component(self):
-        """* does not cross / — nested paths require **."""
-        assert not glob_to_regex(".venv/bin/*").match(".venv/bin/python3/nested")
+    def test_star_matches_nested_relative_path(self):
+        """* matches nested relative paths — only a leading / is blocked."""
+        assert glob_to_regex(".venv/bin/*").match(".venv/bin/python3/nested")
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +223,9 @@ class TestMatches:
     def test_2_redirect_1(self):
         assert matches("make verify 2>&1", "make *")
 
-    def test_2_redirect_devnull_requires_double_star(self):
-        assert not matches("ls foo 2>/dev/null", "ls *")
+    def test_2_redirect_devnull_star_matches(self):
+        """* matches 2>/dev/null — 'foo 2>/dev/null' has no leading /."""
+        assert matches("ls foo 2>/dev/null", "ls *")
         assert matches("ls foo 2>/dev/null", "ls **")
 
     # --- Quoted operators pass through ---

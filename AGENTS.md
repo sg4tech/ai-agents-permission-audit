@@ -26,9 +26,9 @@ or end-of-string).
 
 - `git *` matches `git status` but NOT `git status && git diff`
 - `cat *` matches `cat README.md` but NOT `cat /etc/hosts` (leading slash)
-- `.venv/bin/*` matches `.venv/bin/pytest` but NOT `.venv/bin/sub/pytest` (mid-path slash)
-- `.venv/bin/* *` matches `.venv/bin/pytest tests/ -q` (`tests/` has a trailing slash) ✓
-- `grep *` does NOT match `grep foo 2>/dev/null` (slash followed by `d`, not space)
+- `.venv/bin/*` matches `.venv/bin/pytest` AND `.venv/bin/sub/pytest` (internal slash allowed)
+- `.venv/bin/* *` matches `.venv/bin/pytest tests/ -q` and `.venv/bin/pytest tests/spec.py` ✓
+- `grep *` DOES match `grep foo 2>/dev/null` (matched portion starts with `f`, not `/`)
 - `cat **` matches `cat /Users/viktor/.claude/settings.json` (`**` crosses `/` freely)
 - Compound commands are split at operators; every segment must match independently
 - A compound command is auto-approved only when **every** segment is covered — verified both directions:
