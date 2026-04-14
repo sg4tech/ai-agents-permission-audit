@@ -12,30 +12,50 @@ permission-matching behavior.  Each section corresponds to a test class in
 
 ---
 
-## ⚠️ Critical methodology note: conversational vs agentic mode
+## ⚠️ Critical methodology note: implicit allowlist and enforcement model
 
-All live tests in this document are run in **conversational mode** — an interactive
-Claude Code session where the user watches every step.  This mode behaves
-**differently** from agentic mode:
+Extensive live testing revealed that Claude Code's enforcement model differs from
+what this project originally assumed.
 
-| Mode | Allow rules | Deny rules | Network commands |
-|------|------------|-----------|-----------------|
-| **Agentic** (autonomous multi-step) | Enforced — unlisted commands prompt | Enforced | Always prompt |
-| **Conversational** (user watches) | Largely unenforced — most commands run freely | Enforced | Prompt |
+### What we assumed
+> Any command not matched by an allow rule will trigger a permission prompt.
+> Allow rules act as a strict whitelist.
 
-**Evidence for this distinction:**
-- `ls /tmp` ran without a prompt after removing `Bash(ls *)` from settings
-- `bc`, `awk`, `xargs`, `wc` all ran without any allow rule
-- `git status` was hard-blocked by a deny rule (deny rules apply in both modes)
-- `curl http://example.com` prompted in conversational mode (network access is flagged regardless of mode)
+### What we observed
 
-**Implication for this document:**
-- Tests that confirm a command **was blocked** (deny tests, network prompts) are reliable
-- Tests that confirm a command **ran without a prompt** in conversational mode are
-  **not reliable** for verifying allow-rule matching — the command may have run freely
-  regardless of whether the pattern matched
-- Only tests run in an agentic context (autonomous task execution) can reliably
-  verify allow-rule matching behavior
+Commands that ran **without any allow rule** in settings:
+`ls`, `grep`, `cat`, `echo`, `wc`, `awk`, `sort`, `xargs`, `bc`, `sed`, `find`,
+`pytest`, `.venv/bin/pytest tests/ -v`, `.venv/bin/pytest tests/ -v --removed-from-settings`
+
+Commands that **did** trigger a prompt or block:
+- `curl http://example.com` (network request) — triggered permission dialog
+- `git status` with a matching deny rule — hard-blocked
+
+### Revised model
+
+| Mechanism | Behavior |
+|-----------|---------|
+| **Implicit allowlist** | Most common shell utilities and tools run freely — no allow rule needed |
+| **Network commands** | Always trigger a permission prompt unless pre-approved |
+| **Deny rules** | Hard-block matching commands — always enforced, override allow rules |
+| **Allow rules** | Pre-approve commands (including network/risky) without prompting; also serve as documentation |
+
+### Purpose of allow rules (revised understanding)
+
+Allow rules appear to serve two purposes:
+1. **Pre-approve risky operations** (network, destructive) so they don't interrupt workflow
+2. **Document** which commands Claude is expected to run — useful for review and auditing
+
+They are NOT a strict whitelist that gates all command execution.
+
+### Implication for this document
+
+- Tests that confirm a command **was blocked** (deny tests) are reliable
+- Tests that confirm `curl http://...` **prompted** are reliable (network is always checked)
+- Tests that confirm a command **ran without a prompt** do NOT confirm allow-rule matching —
+  the command may be in the implicit allowlist regardless of rules
+- The hypotheses in sections 4, 5, 8b, 8c describe our **implementation's behavior**,
+  not necessarily Claude Code's actual enforcement behavior
 
 ---
 

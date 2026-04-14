@@ -10,12 +10,15 @@ permission system.  Tests are annotated with their verification status:
 
 Methodology note
 ----------------
-Live tests run in *conversational mode* (user watches every step) are
-unreliable for verifying allow-rule matching.  In that mode most commands
-run freely regardless of whether an allow rule matches — only DENY rules
-and network access are consistently enforced.  Tests confirming a command
-*was blocked* are reliable; tests confirming a command *ran without a prompt*
-are NOT reliable for allow-rule verification.
+Live testing revealed that Claude Code has an implicit allowlist covering most
+common shell utilities (ls, grep, cat, wc, awk, pytest, etc.) — these run without
+any allow rule.  Only DENY rules and network access are reliably enforced.
+
+Allow rules appear to serve as pre-approval for risky operations and documentation,
+NOT as a strict whitelist gating all command execution.
+
+Tests confirming a command *was blocked* are reliable.
+Tests confirming a command *ran without a prompt* do NOT prove allow-rule matching.
 
 Verification procedure
 ----------------------
