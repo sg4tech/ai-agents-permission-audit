@@ -268,17 +268,17 @@ class TestNeedsInvestigation:
     They may be wrong — verify before relying on them.
     """
 
-    def test_stdin_redirect_not_handled(self):
-        """< is not treated as an operator in our implementation.
+    def test_stdin_redirect_not_an_operator(self):
+        """< is NOT an operator — verified by live test.
 
-        UNKNOWN: does Claude Code treat < as an operator?
-        To verify: allow=[Bash(git *)], try "git status < /dev/null"
-        If it prompts → < is an operator (our impl is wrong).
-        If it passes  → < is not an operator (our impl is correct).
+        VERIFIED: allow=[Bash(cat *)], ran "cat /dev/null < /dev/null"
+        — executed without a permission prompt.
+        Our implementation is correct: < does not split the command.
         """
-        # Current behavior: < is NOT treated as operator, command is not split
-        segments = _split_command("git status < /dev/null")
-        assert segments == ["git status < /dev/null"]  # single segment
+        segments = _split_command("cat /dev/null < /dev/null")
+        assert segments == ["cat /dev/null < /dev/null"]  # single segment
+
+        assert matches("cat /dev/null < /dev/null", "cat *")
 
     def test_nested_quotes_behavior(self):
         """UNKNOWN: how are nested quotes handled?

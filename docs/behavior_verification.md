@@ -145,17 +145,15 @@ as a splitting operator.
 
 ### 8a. stdin redirect `<`
 
-**Status:** 🔲 UNKNOWN
+**Status:** ✅ VERIFIED
 
 **Question:** Is `<` treated as a shell operator that splits commands?
 
-**How to verify:**
-1. Add `Bash(git *)` to allow.
-2. Ask Claude to run: `git log < /dev/null`
-   - If **runs without prompt** → `<` is not an operator (our impl is correct)
-   - If **prompts** → `<` is an operator (our impl needs fixing)
+**How verified:**
+Rule `Bash(cat *)` in settings. Ran `cat /dev/null < /dev/null` — executed
+without a permission prompt. Conclusion: `<` is NOT an operator in Claude Code.
 
-**Current implementation:** `<` is NOT treated as an operator.
+**Implementation:** Correct — `<` is not treated as an operator.
 
 ---
 
@@ -198,6 +196,6 @@ as a splitting operator.
 | 5 | Quoted operators are literals | 🔲 HYPOTHESIZED |
 | 6 | Colon-style patterns | 🔲 HYPOTHESIZED |
 | 7 | Deny beats allow | 🔲 HYPOTHESIZED |
-| 8a | `<` is not an operator | 🔲 UNKNOWN |
+| 8a | `<` is not an operator | ✅ VERIFIED |
 | 8b | Backslash escapes operators | 🔲 UNKNOWN |
 | 8c | Nested quotes protect operators | 🔲 UNKNOWN |
