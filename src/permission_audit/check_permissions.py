@@ -145,6 +145,14 @@ def check_command(
        matches some allow rule.
 
     Returns ``(is_allowed, reason)``.
+
+    Known limitation: Claude Code auto-approves bare utility names (``ls``,
+    ``grep``, ``cat``, ``wc``, etc.) without any allow rule.  This function
+    does NOT model that — it requires an explicit allow rule for every command.
+    As a result, bare names with no matching rule will appear as ``NO_MATCH``
+    even though Claude Code would permit them.  The full list of auto-approved
+    names is not published by Anthropic, so implementing this accurately is
+    not feasible.
     """
     # Deny: full string.
     for p in deny:

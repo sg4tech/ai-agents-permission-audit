@@ -208,6 +208,20 @@ class TestCompoundSegmentMatching:
         )
         assert not ok
 
+    def test_bare_name_requires_explicit_rule(self):
+        """check_command limitation: bare names need explicit allow rules here.
+
+        In real Claude Code, bare utility names (ls, grep, cat, wc, …) are
+        auto-approved without any allow rule.  check_command does NOT model
+        this — it requires an explicit rule for every command.  Without one,
+        bare names appear as NO_MATCH even though Claude Code would permit them.
+
+        This test documents the known difference.  See check_command docstring.
+        """
+        ok, reason = check_command("ls /tmp", [], [], [])
+        assert not ok
+        assert reason == "NO_MATCH"
+
 
 # ===========================================================================
 # 5. QUOTED OPERATORS ARE LITERALS                    [VERIFIED via live test]
