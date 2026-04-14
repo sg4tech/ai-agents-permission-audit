@@ -379,15 +379,20 @@ class TestWriteTsv:
 # ---------------------------------------------------------------------------
 
 class TestCheckPermissionsReadsNewFormat:
-    def test_reads_new_tsv(self, tmp_path):
-        """check_permissions main() reads total\tauto\tuser\tdenied\tcmd format."""
+    def test_default_filters_to_user_approved(self, tmp_path):
+        """By default only user-approved commands (user > 0) are checked."""
         from permission_audit.check_permissions import main as check_main
 
         tsv = tmp_path / "commands.tsv"
-        tsv.write_text("# Format: total\tauto\tuser\tdenied\tcommand\n4\t3\t1\t0\tgit status\n2\t2\t0\t0\tls -la\n")
+        # git status: user=1 → included; ls -la: user=0 (auto only) → filtered out
+        tsv.write_text(
+            "# Format: total\tauto\tuser\tdenied\tcommand\n"
+            "4\t3\t1\t0\tgit status\n"
+            "2\t2\t0\t0\tls -la\n"
+        )
 
         settings = tmp_path / "settings.json"
-        settings.write_text(json.dumps({"permissions": {"allow": ["Bash(git status)"], "deny": []}}))
+        settings.write_text(json.dumps({"permissions": {"allow": [], "deny": []}}))
 
         out_dir = tmp_path / "out"
         check_main([
@@ -398,13 +403,40 @@ class TestCheckPermissionsReadsNewFormat:
         ])
 
         not_allowed = (out_dir / "commands_not_allowed.tsv").read_text()
-        # ls -la is not allowed
+        # git status has user=1 → checked → not allowed → in output
+        assert "git status" in not_allowed
+        # ls -la has user=0 → filtered out → not checked → not in output
+        assert "ls -la" not in not_allowed
+
+    def test_all_flag_includes_auto_commands(self, tmp_path):
+        """--all includes all commands regardless of status."""
+        from permission_audit.check_permissions import main as check_main
+
+        tsv = tmp_path / "commands.tsv"
+        tsv.write_text(
+            "# Format: total\tauto\tuser\tdenied\tcommand\n"
+            "4\t3\t1\t0\tgit status\n"
+            "2\t2\t0\t0\tls -la\n"
+        )
+
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"permissions": {"allow": ["Bash(git status)"], "deny": []}}))
+
+        out_dir = tmp_path / "out"
+        check_main([
+            "--input", str(tsv),
+            "--settings", str(settings),
+            "--global-settings", str(settings),
+            "--output-dir", str(out_dir),
+            "--all",
+        ])
+
+        not_allowed = (out_dir / "commands_not_allowed.tsv").read_text()
         assert "ls -la" in not_allowed
-        # git status is allowed → not in not_allowed
         assert "git status" not in not_allowed
 
     def test_reads_old_tsv(self, tmp_path):
-        """check_permissions still handles old count\tcmd format."""
+        """Legacy count\tcmd format: status filter skipped, all commands included."""
         from permission_audit.check_permissions import main as check_main
 
         tsv = tmp_path / "commands.tsv"
