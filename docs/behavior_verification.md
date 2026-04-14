@@ -12,58 +12,50 @@ permission-matching behavior.  Each section corresponds to a test class in
 
 ---
 
-## ⚠️ Critical methodology note: implicit allowlist and enforcement model
+## Enforcement model
 
-Extensive live testing revealed that Claude Code's enforcement model differs from
-what this project originally assumed.
+### How Claude Code decides whether to prompt
 
-### What we assumed
-> Any command not matched by an allow rule will trigger a permission prompt.
-> Allow rules act as a strict whitelist.
+| Command type | Behavior |
+|-------------|---------|
+| **Bare name of standard utility** (`ls`, `grep`, `wc`, `cat`, …) | Auto-approved — no rule needed |
+| **Full path command** (`.venv/bin/pytest`, `/usr/bin/wc`, `/tmp/script`) | Requires an explicit allow rule OR user approval via dialog |
+| **Network command** (`curl http://…`, `wget`, …) | Always requires allow rule or user approval |
+| **Command matching a deny rule** | Hard-blocked — no dialog shown |
 
-### What we observed
+### Evidence
 
-Commands that ran **without any matching rule** in local or global settings:
-`grep`, `wc`, `awk`, `xargs`, `bc`, `ls` (after removing `Bash(ls *)`)
+**Auto-approved (no rule):** `ls`, `wc`, `grep`, `cat`, `awk`, `bc`, `sed` —
+all bare names, ran without a permission prompt after their allow rules were removed.
 
-Most tellingly: `/tmp/claude_test_util` — a **custom script** created just for this
-test with a unique name that could not appear in any implicit allowlist — ran without
-a permission prompt both WITH and WITHOUT a `Bash(claude_test_util:*)` rule in settings.
+**Required permission dialog:**
+- `/usr/bin/wc -l /dev/null` — same binary as `wc`, but explicit path → dialog
+- `.venv/bin/pytest tests/` — full path → dialog (despite global `Bash(pytest:*)`)
+- `/tmp/claude_test_util hello` — custom script, full path → dialog
+- `curl http://example.com` — network → dialog
 
-This rules out the "implicit allowlist of known utilities" hypothesis.  In interactive
-mode, **all commands run freely** unless blocked by a deny rule or flagged for network access.
+**Hard-blocked (no dialog):**
+- `git status` with `deny: ["Bash(git status)"]` in settings → immediate error
 
-Commands that **did** trigger a prompt or block:
-- `curl http://example.com` (network request) — triggered permission dialog
-- `git status` with a matching deny rule — hard-blocked
+### Key implications
 
-### Revised model
+**No basename matching for allow or deny rules.**
+`Bash(pytest:*)` does NOT cover `.venv/bin/pytest` — the rule must include the full
+path prefix: `Bash(.venv/bin/pytest:*)` or `Bash(.venv/bin/pytest tests/ -v)`.
 
-| Mechanism | Behavior |
-|-----------|---------|
-| **Default allow** | In interactive mode, all commands run freely — no allow rule required |
-| **Network commands** | Always trigger a permission prompt unless pre-approved |
-| **Deny rules** | Hard-block matching commands — always enforced, override allow rules |
-| **Allow rules** | Pre-approve commands (including network/risky) without prompting; also serve as documentation |
+**Allow rules are required for full-path commands.**
+Unlike bare names, full-path commands will show a permission dialog if not covered
+by an allow rule.  This is the primary value of the allow rules in `settings.local.json`.
 
-### Purpose of allow rules (revised understanding)
+**Deny rules are hard blocks, not dialogs.**
+A matching deny rule produces an immediate error with no user prompt.  Deny rules
+override allow rules and apply globally.
 
-Allow rules appear to serve two purposes:
-1. **Pre-approve risky operations** (network, destructive) so they don't interrupt workflow
-2. **Document** which commands Claude is expected to run — useful for review and auditing
+### Note on earlier "default-allow" conclusion
 
-They are NOT a strict whitelist that gates all command execution.  In interactive
-mode the default is **allow-all**; rules narrow that only for network/risky ops and
-explicit denies.
-
-### Implication for this document
-
-- Tests that confirm a command **was blocked** (deny tests) are reliable
-- Tests that confirm `curl http://...` **prompted** are reliable (network is always checked)
-- Tests that confirm a command **ran without a prompt** do NOT confirm allow-rule matching —
-  the command may be in the implicit allowlist regardless of rules
-- The hypotheses in sections 4, 5, 8b, 8c describe our **implementation's behavior**,
-  not necessarily Claude Code's actual enforcement behavior
+Earlier tests concluded "all commands run freely" because the user had not yet adopted
+the "always-deny" testing methodology.  Those tests were unreliable — the user was
+likely approving dialogs without reporting them.  The accurate model is above.
 
 ---
 

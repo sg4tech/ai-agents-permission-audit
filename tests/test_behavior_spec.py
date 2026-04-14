@@ -8,17 +8,18 @@ permission system.  Tests are annotated with their verification status:
     UNVERIFIABLE   — cannot be confirmed via conversational-mode live tests;
                      requires agentic-mode testing (see note below)
 
-Methodology note
-----------------
-Live testing revealed that Claude Code has an implicit allowlist covering most
-common shell utilities (ls, grep, cat, wc, awk, pytest, etc.) — these run without
-any allow rule.  Only DENY rules and network access are reliably enforced.
+Enforcement model (verified)
+----------------------------
+- Bare command names (ls, grep, wc, cat, …): auto-approved, no rule needed.
+- Full-path commands (.venv/bin/pytest, /usr/bin/wc, /tmp/script): require an
+  explicit allow rule OR trigger a user permission dialog.
+- Network commands (curl http://…): always require allow rule or user approval.
+- Deny rules: hard-block with no dialog; override allow rules; no basename matching.
+- No basename matching: Bash(pytest:*) does NOT cover .venv/bin/pytest.
 
-Allow rules appear to serve as pre-approval for risky operations and documentation,
-NOT as a strict whitelist gating all command execution.
-
-Tests confirming a command *was blocked* are reliable.
-Tests confirming a command *ran without a prompt* do NOT prove allow-rule matching.
+Tests confirming a command *was blocked* (deny error) are reliable.
+Tests confirming a command *ran without a prompt* are reliable only when the
+"always-deny" methodology was in use (user denies all permission dialogs).
 
 Verification procedure
 ----------------------
