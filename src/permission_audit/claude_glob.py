@@ -65,7 +65,8 @@ _STAR = r"(?:(?!&&|\|\||[|;])[^/])*"
 
 # Regex fragment for ``**``: matches any character sequence that does NOT
 # contain shell operators (slashes are allowed).
-# HYPOTHESIZED: mirrors standard glob semantics; not yet live-tested in Bash patterns.
+# VERIFIED: ``Bash(cat /Users/viktor/**)`` covered ``cat /Users/viktor/.claude/settings.json``
+# piped through a compound command; confirmed via always-deny methodology.
 _DOUBLE_STAR = r"(?:(?!&&|\|\||[|;]).)*"
 
 

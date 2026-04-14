@@ -87,11 +87,12 @@ class TestFdRedirects:
 # ---------------------------------------------------------------------------
 
 class TestSlashBlocking:
-    """VERIFIED: * does not match / in Claude Code permission patterns.
+    """VERIFIED: * does not match /; ** does match / in Claude Code permission patterns.
 
-    Confirmed: ``cat README.md`` auto-approved by ``Bash(cat *)``;
-    ``cat /tmp/file`` prompted (not auto-approved) with the same rule.
-    ``**`` is HYPOTHESIZED to allow slashes (mirrors standard glob semantics).
+    Confirmed via always-deny methodology:
+    - ``cat README.md`` auto-approved by ``Bash(cat *)``
+    - ``cat /tmp/file | python3 -c "..."`` prompted (slash in arg) with ``Bash(cat *)``
+    - ``cat /Users/viktor/.claude/settings.json | python3 -c "..."`` auto-approved with ``Bash(cat /Users/viktor/**)``
     """
 
     def test_star_does_not_match_absolute_path(self):
@@ -106,11 +107,11 @@ class TestSlashBlocking:
         assert not glob_to_regex("ls *").match("ls /tmp")
 
     def test_double_star_matches_absolute_path(self):
-        """HYPOTHESIZED: ** matches / — covers absolute path args."""
+        """VERIFIED: ** matches / — covers absolute path args."""
         assert glob_to_regex("cat **").match("cat /etc/hosts")
 
     def test_double_star_matches_nested_path(self):
-        """HYPOTHESIZED: ** matches multiple path components."""
+        """VERIFIED: ** matches multiple path components."""
         assert glob_to_regex("cat **").match("cat /Users/viktor/.claude/settings.json")
 
     def test_double_star_still_blocks_operators(self):
