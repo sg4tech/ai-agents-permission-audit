@@ -4,7 +4,7 @@
 
 Audit toolset for Claude Code permission rules. Three scripts that work together:
 
-1. **`extract_bash_commands.py`** — scans `~/.claude/projects/<slug>/*.jsonl` for `tool_use` Bash blocks and writes a frequency-sorted TSV
+1. **`extract_bash_commands.py`** — scans `~/.claude/projects/<slug>/*.jsonl` for `tool_use` Bash blocks and writes a frequency-sorted TSV with per-command approval-status breakdown (`auto` / `user` / `denied`)
 2. **`check_permissions.py`** — reads that TSV and checks each command against `allow`/`deny` rules from `settings.local.json` and `~/.claude/settings.json`
 3. **`find_redundant_rules.py`** — finds allow rules that are fully covered by another rule
 
@@ -75,6 +75,25 @@ Known verified behaviors:
 - Deny rules hard-block with no dialog; local deny beats global allow
 - Standalone `cat /absolute/path` → converted to **Read tool**, not Bash — test Bash rules via pipe
 - `Read(//path)` double-slash required for absolute paths in Read rules
+
+## TSV formats
+
+`claude_bash_commands.tsv` (output of `extract_bash_commands.py`) uses the following format:
+
+```
+# Format: total<tab>auto<tab>user<tab>denied<tab>command
+5	3	2	0	git status
+1	0	0	1	cat /etc/passwd
+```
+
+`check_permissions.py` and `find_redundant_rules.py` accept **both** the new 5-column format and the legacy 2-column format (`count<tab>command`) for backward compatibility.
+
+Approval status is inferred from the delta between `tool_use` and `tool_result` timestamps in the JSONL session files:
+- **auto** — delta < threshold (default 2 s); matched an allow rule
+- **user** — delta ≥ threshold; user approved via dialog
+- **denied** — result text matches `"Permission to use Bash with command … has been denied."`
+
+Known limitation: slow auto-approved commands (e.g. `npm install`) will be misclassified as `user` because their execution time pushes the delta above the threshold.
 
 ## What not to do
 

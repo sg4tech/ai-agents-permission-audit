@@ -1,0 +1,399 @@
+"""Tests for extract_bash_commands with approval-status tracking."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from permission_audit.extract_bash_commands import (
+    CommandStats,
+    _classify_status,
+    _get_tool_result_text,
+    extract_commands_with_status,
+    write_tsv,
+)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _ts(offset_s: float = 0.0) -> str:
+    """Return an ISO-8601 timestamp at *offset_s* seconds past epoch."""
+    from datetime import datetime, timezone, timedelta
+    base = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    return (base + timedelta(seconds=offset_s)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _tool_use_record(
+    tool_id: str,
+    command: str,
+    ts_offset: float = 0.0,
+) -> dict:
+    return {
+        "type": "assistant",
+        "timestamp": _ts(ts_offset),
+        "message": {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": tool_id,
+                    "name": "Bash",
+                    "input": {"command": command},
+                }
+            ],
+        },
+    }
+
+
+def _tool_result_record(
+    tool_id: str,
+    result_text: str,
+    ts_offset: float = 0.5,
+) -> dict:
+    return {
+        "type": "user",
+        "timestamp": _ts(ts_offset),
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_id,
+                    "content": result_text,
+                    "is_error": False,
+                }
+            ],
+        },
+    }
+
+
+def _write_jsonl(path: Path, records: list[dict]) -> None:
+    path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: _classify_status
+# ---------------------------------------------------------------------------
+
+class TestClassifyStatus:
+    def test_denied_message(self):
+        assert _classify_status(None, None, "Permission to use Bash with command cat has been denied.") == "denied"
+
+    def test_denied_partial_match(self):
+        assert _classify_status(None, None, "Permission to use Bash with command git status has been denied.") == "denied"
+
+    def test_fast_delta_is_auto(self):
+        from datetime import datetime, timezone, timedelta
+        t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t1 = t0 + timedelta(seconds=1.0)
+        assert _classify_status(t0, t1, "output") == "auto"
+
+    def test_slow_delta_is_user(self):
+        from datetime import datetime, timezone, timedelta
+        t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t1 = t0 + timedelta(seconds=5.0)
+        assert _classify_status(t0, t1, "output") == "user"
+
+    def test_exactly_at_threshold_is_user(self):
+        from datetime import datetime, timezone, timedelta
+        t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t1 = t0 + timedelta(seconds=2.0)
+        assert _classify_status(t0, t1, "output") == "user"
+
+    def test_just_below_threshold_is_auto(self):
+        from datetime import datetime, timezone, timedelta
+        t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t1 = t0 + timedelta(seconds=1.999)
+        assert _classify_status(t0, t1, "output") == "auto"
+
+    def test_missing_timestamps_defaults_to_user(self):
+        assert _classify_status(None, None, "some output") == "user"
+
+    def test_denied_takes_priority_over_fast_delta(self):
+        from datetime import datetime, timezone, timedelta
+        t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t1 = t0 + timedelta(seconds=0.1)
+        assert _classify_status(t0, t1, "Permission to use Bash with command ls has been denied.") == "denied"
+
+    def test_custom_threshold(self):
+        from datetime import datetime, timezone, timedelta
+        t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t1 = t0 + timedelta(seconds=1.5)
+        assert _classify_status(t0, t1, "output", threshold_s=1.0) == "user"
+        assert _classify_status(t0, t1, "output", threshold_s=2.0) == "auto"
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: _get_tool_result_text
+# ---------------------------------------------------------------------------
+
+class TestGetToolResultText:
+    def test_string_content(self):
+        block = {"type": "tool_result", "content": "hello world"}
+        assert _get_tool_result_text(block) == "hello world"
+
+    def test_list_content(self):
+        block = {
+            "type": "tool_result",
+            "content": [{"type": "text", "text": "hello"}, {"type": "text", "text": "world"}],
+        }
+        assert _get_tool_result_text(block) == "hello world"
+
+    def test_empty_content(self):
+        block = {"type": "tool_result", "content": ""}
+        assert _get_tool_result_text(block) == ""
+
+    def test_missing_content(self):
+        block = {"type": "tool_result"}
+        assert _get_tool_result_text(block) == ""
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: extract_commands_with_status
+# ---------------------------------------------------------------------------
+
+class TestExtractCommandsWithStatus:
+    def test_auto_approved(self, tmp_path):
+        """Delta < threshold → auto."""
+        f = tmp_path / "s.jsonl"
+        _write_jsonl(f, [
+            _tool_use_record("id1", "git status", ts_offset=0.0),
+            _tool_result_record("id1", "On branch master", ts_offset=0.5),
+        ])
+        stats = extract_commands_with_status([f])
+        assert "git status" in stats
+        s = stats["git status"]
+        assert s.auto == 1
+        assert s.user == 0
+        assert s.denied == 0
+        assert s.total == 1
+
+    def test_user_approved(self, tmp_path):
+        """Delta >= threshold → user."""
+        f = tmp_path / "s.jsonl"
+        _write_jsonl(f, [
+            _tool_use_record("id1", "git status", ts_offset=0.0),
+            _tool_result_record("id1", "On branch master", ts_offset=5.0),
+        ])
+        stats = extract_commands_with_status([f])
+        s = stats["git status"]
+        assert s.user == 1
+        assert s.auto == 0
+        assert s.denied == 0
+
+    def test_denied(self, tmp_path):
+        """Denied message → denied."""
+        f = tmp_path / "s.jsonl"
+        _write_jsonl(f, [
+            _tool_use_record("id1", "cat /etc/passwd", ts_offset=0.0),
+            _tool_result_record(
+                "id1",
+                "Permission to use Bash with command cat has been denied.",
+                ts_offset=0.1,
+            ),
+        ])
+        stats = extract_commands_with_status([f])
+        s = stats["cat /etc/passwd"]
+        assert s.denied == 1
+        assert s.auto == 0
+        assert s.user == 0
+
+    def test_no_result_not_counted(self, tmp_path):
+        """tool_use without matching tool_result → command not in output."""
+        f = tmp_path / "s.jsonl"
+        _write_jsonl(f, [
+            _tool_use_record("id1", "git status", ts_offset=0.0),
+            # no tool_result
+        ])
+        stats = extract_commands_with_status([f])
+        assert "git status" not in stats
+
+    def test_multiple_invocations_mixed_status(self, tmp_path):
+        """Same command run 3×: auto, user, denied."""
+        f = tmp_path / "s.jsonl"
+        _write_jsonl(f, [
+            _tool_use_record("id1", "ls", ts_offset=0.0),
+            _tool_result_record("id1", "file.txt", ts_offset=0.3),      # auto
+            _tool_use_record("id2", "ls", ts_offset=10.0),
+            _tool_result_record("id2", "file.txt", ts_offset=15.0),     # user
+            _tool_use_record("id3", "ls", ts_offset=20.0),
+            _tool_result_record(
+                "id3",
+                "Permission to use Bash with command ls has been denied.",
+                ts_offset=20.1,
+            ),                                                            # denied
+        ])
+        stats = extract_commands_with_status([f])
+        s = stats["ls"]
+        assert s.auto == 1
+        assert s.user == 1
+        assert s.denied == 1
+        assert s.total == 3
+
+    def test_multiple_session_files(self, tmp_path):
+        """Commands are aggregated across session files."""
+        f1 = tmp_path / "s1.jsonl"
+        f2 = tmp_path / "s2.jsonl"
+        _write_jsonl(f1, [
+            _tool_use_record("id1", "git status", ts_offset=0.0),
+            _tool_result_record("id1", "clean", ts_offset=0.2),
+        ])
+        _write_jsonl(f2, [
+            _tool_use_record("id2", "git status", ts_offset=0.0),
+            _tool_result_record("id2", "clean", ts_offset=0.2),
+        ])
+        stats = extract_commands_with_status([f1, f2])
+        assert stats["git status"].total == 2
+
+    def test_non_bash_tool_ignored(self, tmp_path):
+        """Non-Bash tool_use records are ignored."""
+        f = tmp_path / "s.jsonl"
+        _write_jsonl(f, [
+            {
+                "type": "assistant",
+                "timestamp": _ts(0.0),
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": "id1", "name": "Read", "input": {"path": "/tmp/x"}}],
+                },
+            },
+            _tool_result_record("id1", "content", ts_offset=0.2),
+        ])
+        stats = extract_commands_with_status([f])
+        assert len(stats) == 0
+
+    def test_custom_threshold(self, tmp_path):
+        """Threshold can be overridden."""
+        f = tmp_path / "s.jsonl"
+        _write_jsonl(f, [
+            _tool_use_record("id1", "git status", ts_offset=0.0),
+            _tool_result_record("id1", "clean", ts_offset=1.5),
+        ])
+        stats_default = extract_commands_with_status([f])          # threshold=2.0
+        stats_strict = extract_commands_with_status([f], threshold_s=1.0)
+
+        assert stats_default["git status"].auto == 1   # 1.5 < 2.0
+        assert stats_strict["git status"].user == 1    # 1.5 >= 1.0
+
+    def test_result_text_from_list_content(self, tmp_path):
+        """tool_result.content as list of text blocks — still detects denied."""
+        f = tmp_path / "s.jsonl"
+        rec = {
+            "type": "user",
+            "timestamp": _ts(0.1),
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "id1",
+                        "content": [
+                            {"type": "text", "text": "Permission to use Bash with command rm has been denied."}
+                        ],
+                        "is_error": False,
+                    }
+                ],
+            },
+        }
+        _write_jsonl(f, [_tool_use_record("id1", "rm -rf /tmp/x", ts_offset=0.0), rec])
+        stats = extract_commands_with_status([f])
+        assert stats["rm -rf /tmp/x"].denied == 1
+
+
+# ---------------------------------------------------------------------------
+# write_tsv
+# ---------------------------------------------------------------------------
+
+class TestWriteTsv:
+    def test_format(self, tmp_path):
+        stats = {
+            "git status": CommandStats(auto=3, user=1, denied=0),
+            "rm -rf /": CommandStats(auto=0, user=0, denied=2),
+        }
+        out = tmp_path / "out.tsv"
+        write_tsv(stats, out)
+        lines = [ln for ln in out.read_text().splitlines() if not ln.startswith("#")]
+        # sorted by total desc: rm (2), git (4) → git first
+        assert lines[0].startswith("4\t3\t1\t0\tgit status")
+        assert lines[1].startswith("2\t0\t0\t2\trm -rf /")
+
+    def test_columns(self, tmp_path):
+        stats = {"echo hi": CommandStats(auto=1, user=2, denied=3)}
+        out = tmp_path / "out.tsv"
+        write_tsv(stats, out)
+        lines = [ln for ln in out.read_text().splitlines() if not ln.startswith("#")]
+        parts = lines[0].split("\t")
+        assert parts[0] == "6"   # total
+        assert parts[1] == "1"   # auto
+        assert parts[2] == "2"   # user
+        assert parts[3] == "3"   # denied
+        assert parts[4] == "echo hi"
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat: check_permissions and find_redundant read new TSV format
+# ---------------------------------------------------------------------------
+
+class TestCheckPermissionsReadsNewFormat:
+    def test_reads_new_tsv(self, tmp_path):
+        """check_permissions main() reads total\tauto\tuser\tdenied\tcmd format."""
+        from permission_audit.check_permissions import main as check_main
+
+        tsv = tmp_path / "commands.tsv"
+        tsv.write_text("# Format: total\tauto\tuser\tdenied\tcommand\n4\t3\t1\t0\tgit status\n2\t2\t0\t0\tls -la\n")
+
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"permissions": {"allow": ["Bash(git status)"], "deny": []}}))
+
+        out_dir = tmp_path / "out"
+        check_main([
+            "--input", str(tsv),
+            "--settings", str(settings),
+            "--global-settings", str(settings),
+            "--output-dir", str(out_dir),
+        ])
+
+        not_allowed = (out_dir / "commands_not_allowed.tsv").read_text()
+        # ls -la is not allowed
+        assert "ls -la" in not_allowed
+        # git status is allowed → not in not_allowed
+        assert "git status" not in not_allowed
+
+    def test_reads_old_tsv(self, tmp_path):
+        """check_permissions still handles old count\tcmd format."""
+        from permission_audit.check_permissions import main as check_main
+
+        tsv = tmp_path / "commands.tsv"
+        tsv.write_text("4\tgit status\n2\tls -la\n")
+
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"permissions": {"allow": ["Bash(git status)"], "deny": []}}))
+
+        out_dir = tmp_path / "out"
+        check_main([
+            "--input", str(tsv),
+            "--settings", str(settings),
+            "--global-settings", str(settings),
+            "--output-dir", str(out_dir),
+        ])
+
+        not_allowed = (out_dir / "commands_not_allowed.tsv").read_text()
+        assert "ls -la" in not_allowed
+        assert "git status" not in not_allowed
+
+
+class TestFindRedundantReadsNewFormat:
+    def test_reads_new_tsv(self, tmp_path):
+        """find_redundant_rules reads the new TSV format for real commands."""
+        from permission_audit.find_redundant_rules import main as redundant_main
+
+        tsv = tmp_path / "commands.tsv"
+        tsv.write_text("# Format: total\tauto\tuser\tdenied\tcommand\n3\t3\t0\t0\tgit status\n")
+
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({
+            "permissions": {"allow": ["Bash(git status)", "Bash(git *)"], "deny": []}
+        }))
+
+        # Should run without error; git status is covered by both rules → redundant
+        redundant_main(["--settings", str(settings), "--input", str(tsv)])
