@@ -111,3 +111,6 @@ Known limitation: slow auto-approved commands (e.g. `npm install`) will be miscl
   live verification (fresh session, single rule, deny all dialogs).  Same rule applies to
   flipping UNKNOWN → HYPOTHESIZED → VERIFIED annotations in `test_behavior_spec.py`.
   Implement only after the user reports the verified result.
+- **Do not rewrite any code, tests, or documentation without an explicit instruction to do so.**
+  Presenting findings and waiting for approval is not the same as receiving an instruction to implement.
+  When in doubt — ask, do not act.
