@@ -136,7 +136,7 @@ class TestUnmatchedSegments:
         assert segs == ["curl foo"]
 
     def test_compound_all_matched(self):
-        segs = _unmatched_segments("git status && ls /", ["git *", "ls *"])
+        segs = _unmatched_segments("git status && ls tmp", ["git *", "ls *"])
         assert segs == []
 
 
@@ -146,7 +146,7 @@ class TestUnmatchedSegments:
 
 class TestBuildSuggestions:
     def test_simple_command_suggests_glob(self):
-        rows = [(2, "SIMPLE", "ls /tmp")]
+        rows = [(2, "SIMPLE", "ls foo")]
         suggestions = build_suggestions(rows, [])
         patterns = [p for p, _, _ in suggestions]
         assert "ls *" in patterns
@@ -165,7 +165,7 @@ class TestBuildSuggestions:
 
     def test_sorted_by_invocations(self):
         rows = [
-            (5, "SIMPLE", "ls /tmp"),
+            (5, "SIMPLE", "ls foo"),
             (1, "SIMPLE", "cat file"),
             (3, "SIMPLE", "echo hello"),
         ]
@@ -175,8 +175,8 @@ class TestBuildSuggestions:
 
     def test_count_aggregates_across_commands(self):
         rows = [
-            (2, "SIMPLE", "ls /tmp"),
-            (3, "SIMPLE", "ls /var"),
+            (2, "SIMPLE", "ls foo"),
+            (3, "SIMPLE", "ls bar"),
         ]
         suggestions = build_suggestions(rows, [])
         ls_entry = next((p, u, inv) for p, u, inv in suggestions if p == "ls *")
@@ -190,7 +190,7 @@ class TestBuildSuggestions:
 
 class TestCoverageWith:
     ROWS = [
-        (1, "SIMPLE", "ls /tmp"),
+        (1, "SIMPLE", "ls foo"),
         (1, "SIMPLE", "cat file"),
         (1, "COMPOUND", "git status && curl foo"),
     ]

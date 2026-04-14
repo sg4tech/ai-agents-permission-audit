@@ -17,16 +17,29 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]" -q
 .venv/bin/pytest
 ```
 
-## Key invariant
+## Key invariants
 
-`*` in Claude Code permission patterns does **not** match shell operators (`&&`, `||`, `|`, `;`).
+`*` in Claude Code permission patterns does **not** match shell operators (`&&`, `||`, `|`, `;`) **and does not match `/`**.
 
 - `git *` matches `git status` but NOT `git status && git diff`
+- `cat *` matches `cat README.md` but NOT `cat /etc/hosts` (slash in argument)
+- `cat **` matches `cat /Users/viktor/.claude/settings.json` (`**` crosses `/`)
 - Compound commands are split at operators; every segment must match independently
-- File-descriptor redirects (`2>&1`, `2>/dev/null`) are **not** operators — they pass through fine
+- A compound command is auto-approved only when **every** segment is covered — verified both directions:
+  - Uncovered segment → prompt (verified via always-deny)
+  - All segments covered → auto-approved (verified via always-deny with `git status | cat`)
+- File-descriptor redirects (`2>&1`) are **not** operators — pass through fine; `2>/dev/null` contains `/` so requires `**` or exact pattern
 - Operators inside quotes (`"a|b"`, `'a;b'`) or after backslash are treated as literals
 
-This invariant is the reason the project exists and must be preserved in all changes to `claude_glob.py`.
+These invariants are the reason the project exists and must be preserved in all changes to `claude_glob.py`.
+
+## Read pattern paths
+
+`Read(...)` patterns use **double-slash** for absolute paths:
+- `Read(//Users/viktor/.claude/**)` — absolute path ✅
+- `Read(/Users/viktor/.claude/**)` — relative to project root ❌
+
+Standalone `cat /absolute/path` is converted by Claude Code to a `Read` tool call, not a `Bash(cat ...)` call. To cover it, use `Read(//path/**)`. For pipe contexts (`cat /path | ...`), a `Bash(cat /path/**)` rule is needed since pipes can't use the Read tool (`**` covers nested paths).
 
 ## Settings file locations
 
@@ -54,10 +67,14 @@ contradicts a hypothesis), update both files.
 Known verified behaviors:
 - Exact patterns use **prefix matching**: `Bash(git status)` also covers `git status --short`
 - `*` does **not** cross shell operators (`&&`, `||`, `|`, `;`)
-- `>`, `>>`, `<`, `2>&1`, `2>/dev/null` are **not** operators — `*` matches across all redirects
+- `*` does **not** match `/` — `cat *` covers `cat file.txt` but NOT `cat /etc/hosts`
+- `**` **does** match `/` — `cat **` covers `cat /Users/viktor/.claude/settings.json`
+- `>`, `>>`, `<`, `2>&1` are **not** operators — `*` matches across them
 - Operators inside quotes (`"a|b"`, `'a;b'`) or after backslash (`\|`) are literals
 - Colon-style patterns (`Bash(git status:*)`) are equivalent to space-style (`Bash(git status *)`)
 - Deny rules hard-block with no dialog; local deny beats global allow
+- Standalone `cat /absolute/path` → converted to **Read tool**, not Bash — test Bash rules via pipe
+- `Read(//path)` double-slash required for absolute paths in Read rules
 
 ## What not to do
 

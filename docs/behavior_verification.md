@@ -12,6 +12,41 @@ permission-matching behavior.  Each section corresponds to a test class in
 
 ---
 
+## Testing methodology
+
+### Always-deny method
+Add a `deny` rule that would fire only if the allow rule matched. If the command
+hard-blocks (no dialog) → the allow rule matched. If a dialog appears → allow
+rule did not match.
+
+### Critical: standalone vs pipe for Bash pattern testing
+
+**Standalone `cat /absolute/path`** is converted by Claude Code to a `Read` tool
+call internally. The `Bash(cat ...)` rule is **never evaluated**. Testing
+`Bash(cat **)` by running `cat /path` alone will always prompt — not because the
+Bash rule failed, but because the tool used is Read, not Bash.
+
+**To test a Bash pattern against a command with absolute paths, always use a pipe
+or compound command:**
+```
+cat /path | python3 -c "print('ok')"   ← forces Bash execution
+```
+This applies broadly: any command Claude Code might optimize to a non-Bash tool
+(Read, Edit, Glob, etc.) must be tested via a compound/pipe to verify Bash rules.
+
+### `Read(...)` patterns require double-slash for absolute paths
+
+`Read(/path)` — single slash is interpreted as **relative to project root**.
+`Read(//path)` — double slash is a **true absolute path**.
+
+Always use `//` when writing Read rules for system or home-directory paths:
+```json
+"Read(//Users/viktor/.claude/**)"   ✅
+"Read(/Users/viktor/.claude/**)"    ❌ relative, won't match
+```
+
+---
+
 ## Enforcement model
 
 ### How Claude Code decides whether to prompt
@@ -101,21 +136,24 @@ as a splitting operator.
 
 ## 4. Compound commands: all segments must match
 
-**Status:** ✅ VERIFIED
+**Status:** ✅ VERIFIED (both directions)
 
-**How verified:**
+**Negative case — uncovered segment triggers prompt:**
 Removed `Bash(.venv/bin/pytest tests/ -v)` from settings. `ls /tmp` is
 auto-approved (bare name). Ran `ls /tmp && .venv/bin/pytest --version` —
 Claude Code showed a permission prompt for the full compound command.
 
-Conclusion: a compound command containing any uncovered segment (here,
-`.venv/bin/pytest` without an allow rule) triggers a permission prompt
-for the whole compound command.
+**Positive case — all segments covered → auto-approved:**
+Added `deny: ["Bash(cat *)"]` to local settings. Ran `git status | cat` —
+both segments covered (`git status:*` in global, `cat` is a bare utility).
+Claude Code executed the command immediately and hit the deny rule (hard-block,
+no prompt). Since the deny fired without a dialog, the compound command was
+auto-approved — confirming that all-segments-covered → no prompt.
 
 **Notes:**
 - The prompt shows the **full compound command**, not just the uncovered segment.
 - Earlier testing was unreliable (user was approving prompts silently).
-  This result uses the "always-deny" methodology and is reliable.
+  Both results above use the "always-deny" methodology and are reliable.
 
 ---
 
@@ -226,6 +264,82 @@ sufficient — inner quotes do not "break out" to expose the `|` as an operator.
 
 ---
 
+---
+
+## 9. `*` does not match `/`
+
+**Status:** ✅ VERIFIED
+
+**How verified:**
+`Bash(cat *)` was in global settings. Ran two commands:
+- `cat README.md` — executed without a prompt ✓ (no slash in argument)
+- `cat /tmp/file` — prompted (not auto-approved) ✗ (slash in argument)
+- `cat /Users/viktor/.claude/settings.json` — prompted ✗ (slash in argument)
+
+Also verified the compound positive case using always-deny methodology:
+`git status | python3 -c "print(1)"` — executed without prompt (both segments covered:
+`git status:*` and `python3:*`).
+
+**Conclusion:** `*` in Bash permission patterns matches any character sequence **except
+`/`**. This mirrors standard glob semantics. To cover commands with absolute paths,
+use `**` (see §10) or an explicit prefix pattern (e.g. `Bash(cat /tmp/*)`).
+
+**Impact on redirect targets:** Whether Claude Code strips redirect targets (e.g.
+`> /dev/null`) before glob matching is **unverified**. Conservatively, use `**` or
+exact patterns when redirect targets contain absolute paths. `2>&1` has no slash
+and is safely covered by `*`.
+
+---
+
+## 10. `**` in Bash patterns matches `/`
+
+**Status:** ✅ VERIFIED
+
+**How verified:**
+Added `Bash(cat /Users/viktor/**)` to global allow rules.
+In a fresh session, ran `cat /Users/viktor/.claude/settings.json | python3 -c "print('ok')"` —
+auto-approved without a prompt. The pipe forces Bash execution (not Read tool), confirming
+`**` matched the cat segment including nested path `/Users/viktor/.claude/settings.json`.
+
+**Note on earlier flawed test:** A previous test used standalone `cat /path`, which Claude
+Code converts to a `Read` tool call — the Bash rule was never evaluated. The correct
+methodology for Bash pattern testing is to use a pipe or compound command.
+
+**Conclusion:** `**` in Bash patterns matches `/` (crosses path separators), mirroring
+standard double-glob semantics. Use `**` when you need to cover commands with absolute
+or deeply nested paths:
+- `Bash(cat /Users/viktor/**)` — covers `cat /Users/viktor/.claude/settings.json` ✅
+- `Bash(cat /Users/viktor/*)` — covers `cat /Users/viktor/file.txt` but NOT nested paths
+
+---
+
+## 11. Read patterns require `//` prefix for absolute paths
+
+**Status:** ✅ VERIFIED
+
+**How verified:**
+- `Read(/Users/viktor/.claude/**)` (single slash) — standalone `cat /path` prompted in
+  a fresh session. Single-slash paths are relative to the project root.
+- `Read(//Users/viktor/.claude/**)` (double slash) — `cat /Users/viktor/.claude/settings.json`
+  ran without a prompt in a fresh session. Double-slash = true absolute path.
+
+**Observation:** When Claude runs `cat /absolute/path` as a standalone command, Claude Code
+converts it to a `Read` tool call — NOT a `Bash(cat ...)` call. This means:
+- Standalone `cat /path` → matched against `Read(...)` rules
+- `cat /path | ...` in a pipe → matched against `Bash(cat ...)` rules (cannot use Read)
+
+**Correct format for absolute paths in Read rules:**
+```json
+"Read(//Users/viktor/.claude/**)",
+"Read(//usr/local/bin/**)",
+"Read(//opt/homebrew/bin/**)"
+```
+
+**Impact on Bash rules for absolute paths:** `Bash(cat /path/*)` is still needed for
+pipe contexts (`cat /path | ...`) since those cannot be converted to `Read`.
+
+---
+
 ## Summary table
 
 | # | Behavior | Status |
@@ -240,3 +354,6 @@ sufficient — inner quotes do not "break out" to expose the `|` as an operator.
 | 8a | `<` is not an operator | ✅ VERIFIED |
 | 8b | Backslash escapes operators | ✅ VERIFIED |
 | 8c | Nested quotes protect operators | ✅ VERIFIED |
+| 9 | `*` does not match `/` | ✅ VERIFIED |
+| 10 | `**` matches `/` in Bash patterns | ✅ VERIFIED |
+| 11 | `Read(//path)` double-slash = absolute path | ✅ VERIFIED |

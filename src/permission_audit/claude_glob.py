@@ -58,20 +58,40 @@ def _mask_quoted_operators(cmd: str) -> str:
 
 
 # Regex fragment for ``*``: matches any character sequence that does NOT
-# contain unquoted shell operators.
-_STAR = r"(?:(?!&&|\|\||[|;]).)*"
+# contain shell operators OR forward slashes.
+# VERIFIED: ``*`` does not match ``/`` — ``Bash(cat *)`` covers ``cat file.txt``
+# but NOT ``cat /etc/hosts``.  Use ``**`` for paths containing slashes.
+_STAR = r"(?:(?!&&|\|\||[|;])[^/])*"
+
+# Regex fragment for ``**``: matches any character sequence that does NOT
+# contain shell operators (slashes are allowed).
+# HYPOTHESIZED: mirrors standard glob semantics; not yet live-tested in Bash patterns.
+_DOUBLE_STAR = r"(?:(?!&&|\|\||[|;]).)*"
 
 
 def glob_to_regex(pattern: str) -> re.Pattern[str]:
     """Compile a Claude Code glob *pattern* to a regular expression.
 
-    The ``*`` wildcard matches any character sequence that does not
-    contain shell operators (``&&``, ``||``, ``|``, ``;``).
-    Redirects (``>``, ``>>``, ``<``, ``2>&1``) are allowed through.
+    - ``*``  matches any character sequence that does not contain shell
+      operators (``&&``, ``||``, ``|``, ``;``) or forward slashes.
+    - ``**`` matches any character sequence that does not contain shell
+      operators (slashes are allowed through).
+    Redirects (``>``, ``>>``, ``<``, ``2>&1``) are allowed by both wildcards.
     """
-    parts = pattern.split("*")
-    escaped = [re.escape(p) for p in parts]
-    return re.compile("^" + _STAR.join(escaped) + "$", re.DOTALL)
+    parts: list[str] = ["^"]
+    i = 0
+    while i < len(pattern):
+        if pattern[i: i + 2] == "**":
+            parts.append(_DOUBLE_STAR)
+            i += 2
+        elif pattern[i] == "*":
+            parts.append(_STAR)
+            i += 1
+        else:
+            parts.append(re.escape(pattern[i]))
+            i += 1
+    parts.append("$")
+    return re.compile("".join(parts), re.DOTALL)
 
 
 def matches(cmd: str, pattern: str) -> bool:

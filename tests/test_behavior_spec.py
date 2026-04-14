@@ -116,12 +116,17 @@ class TestWildcardOperatorBlocking:
 # 3. REDIRECTS ARE NOT OPERATORS                      [VERIFIED via live test]
 # ===========================================================================
 # All redirects (>, >>, <, 2>&1, 2>/dev/null, 1>/dev/null) are not operators.
-# * can match across them; they do not split the command.
+# They do NOT split the command into segments.
 # Verified:
 #   - mypy src/ --strict 2>&1 ran without prompt (2>&1 not an operator)
-#   - cat /dev/null < /dev/null ran without prompt (< not an operator)
-#   - Bash(echo *) deny rule matched "echo hello > /dev/null" (> not an operator)
-#   - Bash(echo *) deny rule matched "echo hello >> /dev/null" (>> not an operator)
+#   - cat file.txt < input ran without prompt (< not an operator)
+#   - Bash(echo *) deny rule matched "echo hello > out.txt" (> not an operator)
+#   - Bash(echo *) deny rule matched "echo hello >> out.txt" (>> not an operator)
+#
+# NOTE on * and redirect targets containing /: whether Claude Code strips
+# redirect targets (e.g. > /dev/null) before glob matching is UNVERIFIED.
+# Use ** or an exact pattern when redirect targets contain absolute paths.
+# 2>&1 has no slash and is safely matched by *.
 
 class TestRedirectsNotOperators:
     """VERIFIED: all redirects (>, >>, <, 2>&1) are not operators."""
@@ -129,23 +134,32 @@ class TestRedirectsNotOperators:
     def test_2_redirect_1(self):
         assert matches("make verify 2>&1", "make *")
 
-    def test_2_redirect_devnull(self):
-        assert matches("grep foo file 2>/dev/null", "grep *")
+    def test_2_redirect_devnull_requires_double_star(self):
+        """2>/dev/null contains / — * does not match it; ** does.
 
-    def test_1_redirect_devnull(self):
-        assert matches("cmd arg 1>/dev/null", "cmd *")
+        Whether Claude Code strips redirect targets before matching is
+        UNVERIFIED.  Use ** or an exact pattern to be safe.
+        """
+        assert not matches("grep foo file 2>/dev/null", "grep *")
+        assert matches("grep foo file 2>/dev/null", "grep **")
+
+    def test_1_redirect_devnull_requires_double_star(self):
+        """1>/dev/null contains / — * does not match it; ** does."""
+        assert not matches("cmd arg 1>/dev/null", "cmd *")
+        assert matches("cmd arg 1>/dev/null", "cmd **")
 
     def test_fd_redirect_with_exact_pattern(self):
         assert matches("mypy src/ --strict 2>&1", "mypy src/ --strict")
 
     def test_stdout_redirect(self):
-        assert matches("echo foo > file.txt", "echo *")
+        assert matches("echo foo > out.txt", "echo *")
 
     def test_append_redirect(self):
-        assert matches("echo foo >> file.txt", "echo *")
+        assert matches("echo foo >> out.txt", "echo *")
 
     def test_stdin_redirect(self):
-        assert matches("cat /dev/null < /dev/null", "cat *")
+        """< is not an operator — command is a single segment."""
+        assert matches("cat file.txt < input.txt", "cat *")
 
     def test_fd_redirect_does_not_allow_pipe(self):
         """2>&1 is safe but | after it still splits."""
@@ -153,18 +167,18 @@ class TestRedirectsNotOperators:
 
     def test_check_command_stdout_redirect_single_segment(self):
         """check_command treats > as redirect — single segment, not compound."""
-        ok, reason = check_command("echo foo > file.txt", [], ["echo *"], [])
+        ok, reason = check_command("echo foo > out.txt", [], ["echo *"], [])
         assert ok
         assert "SEGMENTS" not in reason
 
     def test_check_command_append_redirect_single_segment(self):
         """check_command treats >> as redirect — single segment."""
-        ok, _ = check_command("echo foo >> file.txt", [], ["echo *"], [])
+        ok, _ = check_command("echo foo >> out.txt", [], ["echo *"], [])
         assert ok
 
     def test_check_command_stdin_redirect_single_segment(self):
         """check_command treats < as redirect — single segment."""
-        ok, _ = check_command("cat /dev/null < /dev/null", [], ["cat *"], [])
+        ok, _ = check_command("cat file.txt < input.txt", [], ["cat *"], [])
         assert ok
 
 
@@ -182,7 +196,7 @@ class TestCompoundSegmentMatching:
     """VERIFIED: compound command prompts if any segment is not covered."""
 
     def test_compound_all_segments_allowed(self):
-        ok, _ = check_command("git status && ls /", [], ["git *", "ls *"], [])
+        ok, _ = check_command("git status && ls tmp", [], ["git *", "ls *"], [])
         assert ok
 
     def test_compound_one_segment_not_allowed(self):
@@ -191,7 +205,7 @@ class TestCompoundSegmentMatching:
 
     def test_compound_full_string_pattern_wins(self):
         """If full string matches a pattern, it is allowed even without per-segment rules."""
-        ok, _ = check_command("cd /tmp && git status", [], ["cd * && git *"], [])
+        ok, _ = check_command("cd /tmp && git status", [], ["cd ** && git *"], [])
         assert ok
 
     def test_compound_three_segments_all_must_match(self):
@@ -238,13 +252,13 @@ class TestQuotedOperatorsAreLiterals:
     """VERIFIED: operators inside quotes are literals."""
 
     def test_pipe_in_double_quotes(self):
-        assert matches('grep -n "^def \\|^class " src/foo.py', "grep *")
+        assert matches('grep -n "^def \\|^class " foo.py', "grep *")
 
     def test_semicolon_in_double_quotes(self):
         assert matches('python -c "import os; print(1)"', "python *")
 
     def test_pipe_in_single_quotes(self):
-        assert matches("grep -n '^def |^class ' src/foo.py", "grep *")
+        assert matches("grep -n '^def |^class ' foo.py", "grep *")
 
     def test_semicolon_in_single_quotes(self):
         assert matches("python -c 'import os; print(1)'", "python *")
@@ -327,15 +341,10 @@ class TestAdditionalVerifiedBehaviors:
     """VERIFIED: additional edge cases confirmed via always-deny live tests."""
 
     def test_stdin_redirect_not_an_operator(self):
-        """VERIFIED: < is NOT an operator.
-
-        allow=[Bash(cat *)], ran "cat /dev/null < /dev/null"
-        — executed without a permission prompt.
-        """
-        segments = _split_command("cat /dev/null < /dev/null")
-        assert segments == ["cat /dev/null < /dev/null"]  # single segment
-
-        assert matches("cat /dev/null < /dev/null", "cat *")
+        """VERIFIED: < is NOT an operator — command is a single segment."""
+        segments = _split_command("cat file.txt < input.txt")
+        assert segments == ["cat file.txt < input.txt"]  # single segment
+        assert matches("cat file.txt < input.txt", "cat *")
 
     def test_nested_quotes_behavior(self):
         """VERIFIED: nested quotes protect inner operators.
@@ -352,3 +361,52 @@ class TestAdditionalVerifiedBehaviors:
         If \\| were an operator, ls /tmp would have been hard-blocked.
         """
         assert matches("grep foo\\|bar file", "grep *")
+
+
+# ===========================================================================
+# 9. * DOES NOT MATCH /, BUT ** DOES                   [VERIFIED via live test]
+# ===========================================================================
+# * in Bash permission patterns does NOT match forward slashes.
+# ** DOES match forward slashes (crosses path separators).
+#
+# Verified:
+#   - "cat README.md" auto-approved by Bash(cat *) — no slash ✓
+#   - "cat /tmp/file" prompted with Bash(cat *) — slash ✗
+#   - "cat /Users/viktor/.claude/settings.json | python3 -c '...'" auto-approved
+#     by Bash(cat /Users/viktor/**) — ** crosses nested slashes ✓
+
+class TestStarDoesNotMatchSlash:
+    """VERIFIED: * does not match / in Claude Code permission patterns."""
+
+    def test_star_no_match_absolute_path_arg(self):
+        """VERIFIED: cat * does not cover cat /path/to/file."""
+        assert not matches("cat /etc/hosts", "cat *")
+        assert not matches("cat /Users/viktor/.claude/settings.json", "cat *")
+
+    def test_star_matches_relative_arg(self):
+        """VERIFIED: cat * covers cat with a relative filename."""
+        assert matches("cat README.md", "cat *")
+        assert matches("cat file.txt", "cat *")
+
+    def test_star_matches_path_component(self):
+        """* matches a filename within a directory — no slash in matched part."""
+        assert matches(".venv/bin/pytest", ".venv/bin/*")
+        assert not matches(".venv/bin/sub/pytest", ".venv/bin/*")
+
+    def test_double_star_matches_absolute_path(self):
+        """VERIFIED: ** matches / — covers absolute path arguments.
+
+        Bash(cat /Users/viktor/**) auto-approved
+        cat /Users/viktor/.claude/settings.json | python3 -c "print('ok')"
+        in a fresh session (pipe forces Bash, not Read tool).
+        """
+        assert matches("cat /etc/hosts", "cat **")
+        assert matches("cat /Users/viktor/.claude/settings.json", "cat **")
+
+    def test_double_star_matches_relative_arg(self):
+        """VERIFIED: ** also covers relative paths (superset of *)."""
+        assert matches("cat README.md", "cat **")
+
+    def test_double_star_still_blocks_operators(self):
+        """VERIFIED: ** does not cross shell operators."""
+        assert not matches("cat file | grep foo", "cat **")

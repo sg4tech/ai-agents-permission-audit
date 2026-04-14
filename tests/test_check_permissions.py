@@ -170,7 +170,7 @@ class TestIsNoise:
 
 class TestCheckCommand:
     DENY = ["git push --force*", "rm -rf /*"]
-    ALLOW = ["git *", "make *", "ls *", "grep *", "cd * && git *"]
+    ALLOW = ["git *", "make *", "ls *", "grep *", "cd ** && git *"]
 
     def test_simple_allowed(self):
         ok, reason = check_command("git status", self.DENY, self.ALLOW, [])
@@ -210,7 +210,8 @@ class TestCheckCommand:
         assert "SEGMENTS_NOT_ALLOWED" in reason
 
     def test_global_allow(self):
-        ok, reason = check_command("curl http://example.com", self.DENY, [], ["curl *"])
+        """URL contains / — requires ** to match."""
+        ok, reason = check_command("curl http://example.com", self.DENY, [], ["curl **"])
         assert ok
         assert "global" in reason
 
