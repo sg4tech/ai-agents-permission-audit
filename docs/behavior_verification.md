@@ -238,12 +238,12 @@ quotes protecting the operator.
 | # | Behavior | Status |
 |---|---------|--------|
 | 1 | Exact patterns: prefix match | ✅ VERIFIED |
-| 2 | `*` blocked by operators | ✅ VERIFIED |
-| 3 | `2>&1` not an operator | ✅ VERIFIED |
+| 2 | `*` blocked by `\|`, `&&`, `\|\|`, `;` | ✅ VERIFIED |
+| 3 | Redirects (`>`, `>>`, `<`, `2>&1`) not operators | ✅ VERIFIED |
 | 4 | Compound: all segments must match | ⚠️ UNVERIFIABLE |
-| 5 | Quoted operators are literals | ⚠️ UNVERIFIABLE |
+| 5 | Quoted operators are literals | ✅ VERIFIED |
 | 6 | Colon-style patterns | ✅ VERIFIED |
 | 7 | Deny beats allow | ✅ VERIFIED |
 | 8a | `<` is not an operator | ✅ VERIFIED |
-| 8b | Backslash escapes operators | ⚠️ UNVERIFIABLE |
-| 8c | Nested quotes protect operators | ⚠️ UNVERIFIABLE |
+| 8b | Backslash escapes operators | ✅ VERIFIED |
+| 8c | Nested quotes protect operators | ✅ VERIFIED |

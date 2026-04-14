@@ -50,11 +50,13 @@ class TestOperatorBlocking:
     def test_star_blocks_semicolon(self):
         assert not glob_to_regex("echo *").match("echo foo ; echo bar")
 
-    def test_star_blocks_stdout_redirect(self):
-        assert not glob_to_regex("echo *").match("echo foo > file.txt")
+    def test_stdout_redirect_not_blocked(self):
+        """VERIFIED: > is a redirect, not an operator — * crosses it."""
+        assert glob_to_regex("echo *").match("echo foo > file.txt")
 
-    def test_star_blocks_append_redirect(self):
-        assert not glob_to_regex("echo *").match("echo foo >> file.txt")
+    def test_append_redirect_not_blocked(self):
+        """VERIFIED: >> is a redirect, not an operator — * crosses it."""
+        assert glob_to_regex("echo *").match("echo foo >> file.txt")
 
 
 # ---------------------------------------------------------------------------
@@ -98,8 +100,9 @@ class TestMaskQuotedOperators:
         assert "&" not in masked.split('"')[1]
 
     def test_redirect_in_double_quotes(self):
+        """> is not an operator so quoting it has no effect on matching."""
         masked = _mask_quoted_operators('echo "a > b"')
-        assert ">" not in masked.split('"')[1]
+        assert ">" in masked  # > is not masked — it's not an operator
 
     def test_backslash_escaped_pipe(self):
         masked = _mask_quoted_operators("grep foo\\|bar file")
@@ -158,8 +161,9 @@ class TestMatches:
     def test_semicolon_blocks(self):
         assert not matches("echo a ; echo b", "echo *")
 
-    def test_redirect_blocks(self):
-        assert not matches("echo foo > out.txt", "echo *")
+    def test_redirect_passes(self):
+        """VERIFIED: > is not an operator — * matches across it."""
+        assert matches("echo foo > out.txt", "echo *")
 
     # --- fd redirects pass through ---
     def test_2_redirect_1(self):
@@ -237,4 +241,5 @@ class TestPatternContainsOperators:
         assert pattern_contains_operators("echo * ; echo *")
 
     def test_pattern_with_redirect(self):
-        assert pattern_contains_operators("git show * > /tmp/*")
+        """> is not an operator, so a pattern with > does not contain operators."""
+        assert not pattern_contains_operators("git show * > /tmp/*")

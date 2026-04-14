@@ -77,12 +77,18 @@ class TestExactPatternPrefixMatch:
 # ===========================================================================
 # 2. WILDCARD OPERATOR BLOCKING                       [VERIFIED via live test]
 # ===========================================================================
-# * does not match shell operators (&&, ||, |, ;, >).
+# * does not match shell operators (&&, ||, |, ;).
 # Claude Code splits compound commands at operators and matches each
-# segment independently.  Documented in Claude Code permission docs.
+# segment independently.
+# VERIFIED: deny rule Bash(ls *) blocked "echo hello | ls /tmp",
+# "echo hello && ls /tmp", "echo hello ; ls /tmp", "echo hello || ls /tmp".
+# VERIFIED: > and >> are NOT operators — Bash(echo *) matched
+# "echo hello > /dev/null" and "echo hello >> /dev/null".
 
 class TestWildcardOperatorBlocking:
-    """VERIFIED: * does not cross shell operators."""
+    """VERIFIED: * does not cross shell operators (|, &&, ||, ;).
+    > and >> are redirects, not operators — * crosses them freely.
+    """
 
     def test_star_blocks_pipe(self):
         assert not matches("ls foo | grep bar", "ls *")
@@ -96,22 +102,28 @@ class TestWildcardOperatorBlocking:
     def test_star_blocks_semicolon(self):
         assert not matches("echo a ; echo b", "echo *")
 
-    def test_star_blocks_stdout_redirect(self):
-        assert not matches("echo foo > file.txt", "echo *")
+    def test_stdout_redirect_not_an_operator(self):
+        """VERIFIED: > is a redirect, not an operator — * crosses it."""
+        assert matches("echo foo > file.txt", "echo *")
 
-    def test_star_blocks_append_redirect(self):
-        assert not matches("echo foo >> file.txt", "echo *")
+    def test_append_redirect_not_an_operator(self):
+        """VERIFIED: >> is a redirect, not an operator — * crosses it."""
+        assert matches("echo foo >> file.txt", "echo *")
 
 
 # ===========================================================================
-# 3. FD REDIRECTS ARE NOT OPERATORS                   [VERIFIED via live test]
+# 3. REDIRECTS ARE NOT OPERATORS                      [VERIFIED via live test]
 # ===========================================================================
-# 2>&1, 2>/dev/null, 1>/dev/null are fd redirects — not shell operators.
+# All redirects (>, >>, <, 2>&1, 2>/dev/null, 1>/dev/null) are not operators.
 # * can match across them; they do not split the command.
-# Verified: mypy src/ --strict 2>&1 ran without prompt.
+# Verified:
+#   - mypy src/ --strict 2>&1 ran without prompt (2>&1 not an operator)
+#   - cat /dev/null < /dev/null ran without prompt (< not an operator)
+#   - Bash(echo *) deny rule matched "echo hello > /dev/null" (> not an operator)
+#   - Bash(echo *) deny rule matched "echo hello >> /dev/null" (>> not an operator)
 
-class TestFdRedirectsNotOperators:
-    """VERIFIED: fd redirects (2>&1, 1>/dev/null) are not operators."""
+class TestRedirectsNotOperators:
+    """VERIFIED: all redirects (>, >>, <, 2>&1) are not operators."""
 
     def test_2_redirect_1(self):
         assert matches("make verify 2>&1", "make *")
@@ -124,6 +136,15 @@ class TestFdRedirectsNotOperators:
 
     def test_fd_redirect_with_exact_pattern(self):
         assert matches("mypy src/ --strict 2>&1", "mypy src/ --strict")
+
+    def test_stdout_redirect(self):
+        assert matches("echo foo > file.txt", "echo *")
+
+    def test_append_redirect(self):
+        assert matches("echo foo >> file.txt", "echo *")
+
+    def test_stdin_redirect(self):
+        assert matches("cat /dev/null < /dev/null", "cat *")
 
     def test_fd_redirect_does_not_allow_pipe(self):
         """2>&1 is safe but | after it still splits."""

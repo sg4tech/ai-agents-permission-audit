@@ -1,12 +1,12 @@
 """Claude Code permission glob matcher.
 
 Claude Code's ``*`` wildcard in permission patterns does NOT match shell
-operators (``&&``, ``||``, ``|``, ``;``, ``>``).  Operators inside quotes
+operators (``&&``, ``||``, ``|``, ``;``).  Operators inside quotes
 (single or double) or preceded by a backslash are treated as ordinary
 characters, not as operators.
 
-File-descriptor redirects (``2>&1``, ``2>/dev/null``) are also not
-treated as operators — only ``>`` without a preceding digit counts.
+Redirects (``>``, ``>>``, ``2>&1``, ``<``) are NOT operators — ``*``
+matches across them freely.
 """
 
 from __future__ import annotations
@@ -15,11 +15,11 @@ import re
 from pathlib import Path
 
 # Detects unquoted shell operators in a raw string.
-# > is only an operator when NOT preceded by a digit (fd redirects are safe).
-_HAS_OPERATORS = re.compile(r"&&|\|\||(?<!\|)\|(?!\|)|(?<!\d)>|;")
+# Redirects (>, >>, <, 2>&1) are NOT operators.
+_HAS_OPERATORS = re.compile(r"&&|\|\||(?<!\|)\|(?!\|)|;")
 
 # Placeholder characters used by _mask_quoted_operators.
-_MASK = {"|": "\x01", ";": "\x02", "&": "\x03", ">": "\x04"}
+_MASK = {"|": "\x01", ";": "\x02", "&": "\x03"}
 
 
 def _mask_quoted_operators(cmd: str) -> str:
@@ -59,15 +59,15 @@ def _mask_quoted_operators(cmd: str) -> str:
 
 # Regex fragment for ``*``: matches any character sequence that does NOT
 # contain unquoted shell operators.
-_STAR = r"(?:(?!&&|\|\||[|;]|(?<!\d)>).)*"
+_STAR = r"(?:(?!&&|\|\||[|;]).)*"
 
 
 def glob_to_regex(pattern: str) -> re.Pattern[str]:
     """Compile a Claude Code glob *pattern* to a regular expression.
 
     The ``*`` wildcard matches any character sequence that does not
-    contain shell operators (``&&``, ``||``, ``|``, ``;``, ``>``).
-    File-descriptor redirects (digit before ``>``) are allowed through.
+    contain shell operators (``&&``, ``||``, ``|``, ``;``).
+    Redirects (``>``, ``>>``, ``<``, ``2>&1``) are allowed through.
     """
     parts = pattern.split("*")
     escaped = [re.escape(p) for p in parts]
