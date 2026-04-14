@@ -118,6 +118,15 @@ class TestIsCompound:
     def test_2_redirect_not_compound(self):
         assert not is_compound("make verify 2>&1")
 
+    def test_stdout_redirect_not_compound(self):
+        assert not is_compound("echo foo > file.txt")
+
+    def test_append_redirect_not_compound(self):
+        assert not is_compound("echo foo >> file.txt")
+
+    def test_stdin_redirect_not_compound(self):
+        assert not is_compound("cat /dev/null < /dev/null")
+
     def test_quoted_pipe_not_compound(self):
         assert not is_compound('grep "a|b" file')
 
