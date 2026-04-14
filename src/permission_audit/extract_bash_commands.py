@@ -96,8 +96,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    slug = args.project or _detect_project_slug(find_repo_root())
-    output = args.output or Path(__file__).resolve().parent / "claude_bash_commands.tsv"
+    repo_root = find_repo_root()
+    slug = args.project or _detect_project_slug(repo_root)
+    out_dir = repo_root / "audit-output"
+    out_dir.mkdir(exist_ok=True)
+    output = args.output or out_dir / "claude_bash_commands.tsv"
 
     files = find_session_files(slug)
     if not files:

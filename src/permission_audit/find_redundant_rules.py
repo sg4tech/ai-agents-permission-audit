@@ -40,7 +40,6 @@ def _generate_test_strings(pattern: str) -> list[str]:
 
 def main(argv: list[str] | None = None) -> None:
     repo_root = find_repo_root()
-    script_dir = Path(__file__).resolve().parent
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -52,7 +51,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--input", "-i",
         type=Path,
-        default=script_dir / "claude_bash_commands.tsv",
+        default=repo_root / "audit-output" / "claude_bash_commands.tsv",
         help="Input TSV from extract_bash_commands.py",
     )
     args = parser.parse_args(argv)

@@ -38,6 +38,24 @@ This invariant is the reason the project exists and must be preserved in all cha
 Claude Code project slug = absolute repo path with `/` replaced by `-`, leading slash stripped:
 `/Users/me/myproject` → `-Users-me-myproject`
 
+## Behavioral specification
+
+`tests/test_behavior_spec.py` documents what we know about Claude Code's
+actual matching behavior.  Each test class is annotated with its status:
+
+- **VERIFIED** — confirmed by live testing against Claude Code
+- **HYPOTHESIZED** — inferred from docs/logic, not yet live-tested
+- **UNKNOWN** — edge case with no confirmed behavior yet
+
+`docs/behavior_verification.md` has step-by-step instructions for verifying
+each hypothesis.  When you discover new behavior (especially if a live test
+contradicts a hypothesis), update both files.
+
+Known verified behaviors:
+- Exact patterns use **prefix matching**: `Bash(git status)` also covers `git status --short`
+- `*` does **not** cross shell operators (`&&`, `||`, `|`, `;`, `>`)
+- `2>&1` and other fd redirects are **not** operators — `*` matches across them
+
 ## What not to do
 
 - Do not add external runtime dependencies — the tool must work with stdlib only

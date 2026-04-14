@@ -205,13 +205,12 @@ def _is_noise(cmd: str) -> bool:
 
 def main(argv: list[str] | None = None) -> None:
     repo_root = find_repo_root()
-    script_dir = Path(__file__).resolve().parent
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--input", "-i",
         type=Path,
-        default=script_dir / "claude_bash_commands.tsv",
+        default=repo_root / "audit-output" / "claude_bash_commands.tsv",
         help="Input TSV from extract_bash_commands.py",
     )
     parser.add_argument(
@@ -229,7 +228,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=script_dir,
+        default=repo_root / "audit-output",
         help="Directory for output TSV files",
     )
     args = parser.parse_args(argv)
@@ -268,6 +267,7 @@ def main(argv: list[str] | None = None) -> None:
     compound_not_allowed.sort(key=lambda x: -x[0])
 
     out_dir = args.output_dir
+    out_dir.mkdir(exist_ok=True)
     _write_not_allowed(out_dir / "commands_not_allowed.tsv", not_allowed)
     _write_denied(out_dir / "commands_denied.tsv", denied)
     _write_compound(out_dir / "commands_compound_not_allowed.tsv", compound_not_allowed)

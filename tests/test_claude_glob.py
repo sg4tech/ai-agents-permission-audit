@@ -131,6 +131,23 @@ class TestMatches:
     def test_exact_match(self):
         assert matches("git status", "git status")
 
+    # --- Exact pattern prefix matching (no wildcard) ---
+    def test_exact_prefix_with_extra_args(self):
+        """Exact pattern matches command with additional arguments."""
+        assert matches("git status --short", "git status")
+
+    def test_exact_prefix_with_fd_redirect(self):
+        """Exact pattern matches command with 2>&1 appended."""
+        assert matches("mypy src/ --strict 2>&1", "mypy src/ --strict")
+
+    def test_exact_prefix_no_partial_word(self):
+        """Exact pattern does NOT match if extra text is not space-separated."""
+        assert not matches("git statuslong", "git status")
+
+    def test_exact_prefix_shorter_cmd_no_match(self):
+        """Shorter command does not match longer exact pattern."""
+        assert not matches("git", "git status")
+
     # --- Operator blocking ---
     def test_ampersand_blocks(self):
         assert not matches("git status && git diff", "git *")
