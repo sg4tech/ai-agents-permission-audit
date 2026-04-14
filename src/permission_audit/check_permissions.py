@@ -239,7 +239,8 @@ def main(argv: list[str] | None = None) -> None:
         "--all",
         action="store_true",
         dest="all_commands",
-        help="Include all commands regardless of approval status (default: user-approved only)",
+        help="Include all commands regardless of approval status (default: user-approved only)."
+             " Also needed to see commands that were only ever denied (denied > 0, user = 0).",
     )
     args = parser.parse_args(argv)
 

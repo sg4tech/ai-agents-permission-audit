@@ -379,7 +379,7 @@ class TestWriteTsv:
 # ---------------------------------------------------------------------------
 
 class TestCheckPermissionsReadsNewFormat:
-    def test_default_filters_to_user_approved(self, tmp_path):
+    def test_default_filters_to_user_approved(self, tmp_path, capsys):
         """By default only user-approved commands (user > 0) are checked."""
         from permission_audit.check_permissions import main as check_main
 
@@ -407,8 +407,10 @@ class TestCheckPermissionsReadsNewFormat:
         assert "git status" in not_allowed
         # ls -la has user=0 → filtered out → not checked → not in output
         assert "ls -la" not in not_allowed
+        # summary mentions the filter
+        assert "user-approved" in capsys.readouterr().out
 
-    def test_all_flag_includes_auto_commands(self, tmp_path):
+    def test_all_flag_includes_auto_commands(self, tmp_path, capsys):
         """--all includes all commands regardless of status."""
         from permission_audit.check_permissions import main as check_main
 
@@ -434,8 +436,91 @@ class TestCheckPermissionsReadsNewFormat:
         not_allowed = (out_dir / "commands_not_allowed.tsv").read_text()
         assert "ls -la" in not_allowed
         assert "git status" not in not_allowed
+        # no status note when --all is used
+        assert "user-approved" not in capsys.readouterr().out
 
-    def test_reads_old_tsv(self, tmp_path):
+    def test_denied_only_skipped_by_default(self, tmp_path):
+        """Commands with denied>0 but user=0 are skipped by default filter.
+
+        These commands were always rejected — the user never approved them.
+        Use --all to include them in the audit.
+        """
+        from permission_audit.check_permissions import main as check_main
+
+        tsv = tmp_path / "commands.tsv"
+        tsv.write_text(
+            "# Format: total\tauto\tuser\tdenied\tcommand\n"
+            "2\t0\t0\t2\trm -rf /\n"   # denied only → skipped
+            "1\t0\t1\t0\tgit status\n"  # user=1 → included
+        )
+
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"permissions": {"allow": [], "deny": []}}))
+
+        out_dir = tmp_path / "out"
+        check_main([
+            "--input", str(tsv),
+            "--settings", str(settings),
+            "--global-settings", str(settings),
+            "--output-dir", str(out_dir),
+        ])
+
+        not_allowed = (out_dir / "commands_not_allowed.tsv").read_text()
+        assert "git status" in not_allowed
+        assert "rm -rf /" not in not_allowed  # intentionally skipped; use --all to see
+
+    def test_all_flag_includes_denied_only_commands(self, tmp_path):
+        """--all includes commands with denied>0, user=0."""
+        from permission_audit.check_permissions import main as check_main
+
+        tsv = tmp_path / "commands.tsv"
+        tsv.write_text(
+            "# Format: total\tauto\tuser\tdenied\tcommand\n"
+            "2\t0\t0\t2\trm -rf /\n"
+        )
+
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"permissions": {"allow": [], "deny": []}}))
+
+        out_dir = tmp_path / "out"
+        check_main([
+            "--input", str(tsv),
+            "--settings", str(settings),
+            "--global-settings", str(settings),
+            "--output-dir", str(out_dir),
+            "--all",
+        ])
+
+        not_allowed = (out_dir / "commands_not_allowed.tsv").read_text()
+        assert "rm -rf /" in not_allowed
+
+    def test_empty_after_filter(self, tmp_path, capsys):
+        """TSV with all user=0 rows → 0 commands checked, no crash."""
+        from permission_audit.check_permissions import main as check_main
+
+        tsv = tmp_path / "commands.tsv"
+        tsv.write_text(
+            "# Format: total\tauto\tuser\tdenied\tcommand\n"
+            "3\t3\t0\t0\tnpm install\n"
+            "1\t1\t0\t0\tgit fetch\n"
+        )
+
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"permissions": {"allow": [], "deny": []}}))
+
+        out_dir = tmp_path / "out"
+        check_main([
+            "--input", str(tsv),
+            "--settings", str(settings),
+            "--global-settings", str(settings),
+            "--output-dir", str(out_dir),
+        ])
+
+        out = capsys.readouterr().out
+        assert "Commands checked: 0 unique" in out
+        assert (out_dir / "commands_not_allowed.tsv").exists()
+
+    def test_reads_old_tsv(self, tmp_path, capsys):
         """Legacy count\tcmd format: status filter skipped, all commands included."""
         from permission_audit.check_permissions import main as check_main
 
@@ -456,6 +541,32 @@ class TestCheckPermissionsReadsNewFormat:
         not_allowed = (out_dir / "commands_not_allowed.tsv").read_text()
         assert "ls -la" in not_allowed
         assert "git status" not in not_allowed
+        assert "legacy format" in capsys.readouterr().out
+
+    def test_legacy_with_all_flag(self, tmp_path, capsys):
+        """Legacy format + --all: legacy_format takes priority in status_note."""
+        from permission_audit.check_permissions import main as check_main
+
+        tsv = tmp_path / "commands.tsv"
+        tsv.write_text("4\tgit status\n2\tls -la\n")
+
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"permissions": {"allow": ["Bash(git status)"], "deny": []}}))
+
+        out_dir = tmp_path / "out"
+        check_main([
+            "--input", str(tsv),
+            "--settings", str(settings),
+            "--global-settings", str(settings),
+            "--output-dir", str(out_dir),
+            "--all",
+        ])
+
+        not_allowed = (out_dir / "commands_not_allowed.tsv").read_text()
+        # all commands included (legacy bypasses filter even without --all)
+        assert "ls -la" in not_allowed
+        # legacy_format takes priority over --all in status_note
+        assert "legacy format" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
