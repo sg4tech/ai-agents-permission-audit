@@ -42,7 +42,7 @@ Each command is tagged with an approval status inferred from the time delta betw
 | Status | Meaning |
 |--------|---------|
 | `auto` | Delta &lt; 2 s — Claude Code approved instantly via a matching allow rule |
-| `user` | Delta ≥ 2 s — you saw the approval dialog and clicked Allow manually |
+| `user` | Delta ≥ 2 s — you approved via dialog, or a slow auto-approved command (see note) |
 | `denied` | Result contained the Claude Code permission denial message |
 
 Commands you approved manually (`user`) are the highest-priority candidates for new allow rules.

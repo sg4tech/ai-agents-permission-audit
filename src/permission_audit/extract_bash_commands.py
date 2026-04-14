@@ -41,6 +41,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from permission_audit.claude_glob import find_repo_root
 
@@ -54,6 +55,8 @@ _DENIED_RE = re.compile(
 
 # Default threshold: deltas below this are classified as auto-approved.
 _AUTO_THRESHOLD_S: float = 2.0
+
+ApprovalStatus = Literal["auto", "user", "denied"]
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +81,7 @@ class CommandStats:
     def total(self) -> int:
         return self.auto + self.user + self.denied
 
-    def increment(self, status: str) -> None:
+    def increment(self, status: ApprovalStatus) -> None:
         """Increment the counter for *status* (``'auto'``, ``'user'``, or ``'denied'``)."""
         if status == "auto":
             self.auto += 1
@@ -121,7 +124,7 @@ def _classify_status(
     result_ts: datetime | None,
     result_text: str,
     threshold_s: float = _AUTO_THRESHOLD_S,
-) -> str:
+) -> ApprovalStatus:
     """Return ``'auto'``, ``'user'``, or ``'denied'``.
 
     Denial is checked first (regex on *result_text*) regardless of timestamps.
@@ -185,6 +188,7 @@ def extract_commands_with_status(
     for path in session_files:
         # Map tool_use_id → (command, use_timestamp) for unresolved tool calls.
         pending: dict[str, tuple[str, datetime | None]] = {}
+        skipped = 0
 
         try:
             fh = open(path)
@@ -200,6 +204,7 @@ def extract_commands_with_status(
                 try:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
+                    skipped += 1
                     continue
 
                 rec_ts = _parse_ts(rec.get("timestamp"))
@@ -218,8 +223,9 @@ def extract_commands_with_status(
 
                     if btype == "tool_use" and block.get("name") == "Bash":
                         cmd = block.get("input", {}).get("command", "")
-                        if cmd:
-                            pending[block["id"]] = (cmd, rec_ts)
+                        tool_id = block.get("id")
+                        if cmd and tool_id:
+                            pending[tool_id] = (cmd, rec_ts)
 
                     elif btype == "tool_result":
                         tool_id = block.get("tool_use_id", "")
@@ -238,6 +244,17 @@ def extract_commands_with_status(
 
                         status = _classify_status(use_ts, rec_ts, result_text, threshold_s)
                         stats.setdefault(cmd, CommandStats()).increment(status)
+
+            if skipped:
+                print(
+                    f"warning: {path}: skipped {skipped} malformed JSON lines",
+                    file=sys.stderr,
+                )
+            if pending:
+                print(
+                    f"warning: {path}: {len(pending)} tool_use entries had no matching tool_result",
+                    file=sys.stderr,
+                )
 
     return stats
 

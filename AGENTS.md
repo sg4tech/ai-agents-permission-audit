@@ -20,9 +20,8 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]" -q
 ## Key invariants
 
 `*` in Claude Code permission patterns does **not** match shell operators (`&&`, `||`, `|`, `;`).
-`*` does **not** match a leading `/` (absolute paths) and does **not** cross `/` mid-path,
-but **does** match a trailing `/` on a directory argument (slash immediately followed by space
-or end-of-string).
+`*` does **not** match a leading `/` (absolute paths), but **does** match internal `/`
+characters freely (relative paths, directory trailing slashes, redirect targets).
 
 - `git *` matches `git status` but NOT `git status && git diff`
 - `cat *` matches `cat README.md` but NOT `cat /etc/hosts` (leading slash)
@@ -34,7 +33,7 @@ or end-of-string).
 - A compound command is auto-approved only when **every** segment is covered — verified both directions:
   - Uncovered segment → prompt (verified via always-deny)
   - All segments covered → auto-approved (verified via always-deny with `git status | cat`)
-- File-descriptor redirects (`2>&1`) are **not** operators — pass through fine; `2>/dev/null` contains `/` so requires `**` or exact pattern
+- File-descriptor redirects (`2>&1`) are **not** operators — pass through fine; `2>/dev/null` is matched by `*` (matched portion starts before the `/`)
 - Operators inside quotes (`"a|b"`, `'a;b'`) or after backslash are treated as literals
 
 These invariants are the reason the project exists and must be preserved in all changes to `claude_glob.py`.
@@ -73,7 +72,7 @@ contradicts a hypothesis), update both files.
 Known verified behaviors:
 - Exact patterns use **prefix matching**: `Bash(git status)` also covers `git status --short`
 - `*` does **not** cross shell operators (`&&`, `||`, `|`, `;`)
-- `*` does **not** match `/` — `cat *` covers `cat file.txt` but NOT `cat /etc/hosts`
+- `*` does **not** match a leading `/` — `cat *` covers `cat file.txt` and `cat src/foo/bar.py` but NOT `cat /etc/hosts`
 - `**` **does** match `/` — `cat **` covers `cat /Users/viktor/.claude/settings.json`
 - `>`, `>>`, `<`, `2>&1` are **not** operators — `*` matches across them
 - Operators inside quotes (`"a|b"`, `'a;b'`) or after backslash (`\|`) are literals
@@ -96,7 +95,7 @@ Known verified behaviors:
 
 Approval status is inferred from the delta between `tool_use` and `tool_result` timestamps in the JSONL session files:
 - **auto** — delta < threshold (default 2 s); matched an allow rule
-- **user** — delta ≥ threshold; user approved via dialog
+- **user** — delta ≥ threshold; user approved via dialog (or slow auto-approved command)
 - **denied** — result text matches `"Permission to use Bash with command … has been denied."`
 
 Known limitation: slow auto-approved commands (e.g. `npm install`) will be misclassified as `user` because their execution time pushes the delta above the threshold.

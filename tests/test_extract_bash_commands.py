@@ -10,6 +10,7 @@ from permission_audit.extract_bash_commands import (
     CommandStats,
     _classify_status,
     _get_tool_result_text,
+    _parse_ts,
     extract_commands_with_status,
     write_tsv,
 )
@@ -71,6 +72,39 @@ def _tool_result_record(
 
 def _write_jsonl(path: Path, records: list[dict]) -> None:
     path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: _parse_ts
+# ---------------------------------------------------------------------------
+
+class TestParseTs:
+    def test_z_suffix(self):
+        """Timestamps with Z suffix (Claude Code's format) are parsed correctly."""
+        result = _parse_ts("2026-01-01T00:00:00.000Z")
+        assert result is not None
+        assert result.year == 2026
+        assert result.tzinfo is not None
+
+    def test_explicit_offset(self):
+        """Timestamps with explicit timezone offset are parsed."""
+        result = _parse_ts("2026-01-01T05:00:00+05:00")
+        assert result is not None
+        assert result.hour == 5
+
+    def test_malformed_returns_none(self):
+        """Unparseable timestamp strings return None, not raise."""
+        assert _parse_ts("not-a-date") is None
+
+    def test_epoch_string_returns_none(self):
+        """Numeric string (epoch) is not valid ISO-8601."""
+        assert _parse_ts("1714000000") is None
+
+    def test_none_input(self):
+        assert _parse_ts(None) is None
+
+    def test_empty_string(self):
+        assert _parse_ts("") is None
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +364,53 @@ class TestExtractCommandsWithStatus:
         _write_jsonl(f, [_tool_use_record("id1", "cat /etc/passwd", ts_offset=0.0), rec])
         stats = extract_commands_with_status([f])
         assert stats["cat /etc/passwd"].denied == 1
+
+    def test_malformed_jsonl_lines_skipped(self, tmp_path, capsys):
+        """Malformed JSON lines are skipped; valid lines still processed."""
+        f = tmp_path / "s.jsonl"
+        valid_use = json.dumps(_tool_use_record("id1", "git status", ts_offset=0.0))
+        valid_result = json.dumps(_tool_result_record("id1", "ok", ts_offset=0.5))
+        f.write_text(f"NOT JSON\n{valid_use}\n{{broken\n{valid_result}\n")
+
+        stats = extract_commands_with_status([f])
+        assert stats["git status"].auto == 1
+        err = capsys.readouterr().err
+        assert "skipped 2 malformed JSON lines" in err
+
+    def test_missing_tool_use_id_skipped(self, tmp_path):
+        """tool_use block without 'id' field is silently skipped, not crash."""
+        f = tmp_path / "s.jsonl"
+        # A tool_use block with no "id" key
+        bad_record = {
+            "type": "assistant",
+            "timestamp": _ts(0.0),
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},
+                ],
+            },
+        }
+        _write_jsonl(f, [bad_record])
+        stats = extract_commands_with_status([f])
+        assert len(stats) == 0  # no crash, no data
+
+    def test_unresolved_pending_warning(self, tmp_path, capsys):
+        """tool_use with no matching tool_result emits a warning."""
+        f = tmp_path / "s.jsonl"
+        _write_jsonl(f, [_tool_use_record("orphan1", "echo hello", ts_offset=0.0)])
+        stats = extract_commands_with_status([f])
+        assert len(stats) == 0
+        err = capsys.readouterr().err
+        assert "1 tool_use entries had no matching tool_result" in err
+
+    def test_nonexistent_file_skipped(self, tmp_path, capsys):
+        """Non-existent session file is skipped with a warning."""
+        missing = tmp_path / "does_not_exist.jsonl"
+        stats = extract_commands_with_status([missing])
+        assert len(stats) == 0
+        err = capsys.readouterr().err
+        assert "warning" in err.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -607,7 +688,7 @@ class TestCommandStats:
     def test_increment_unknown_raises(self):
         s = CommandStats()
         with pytest.raises(ValueError, match="Unknown status"):
-            s.increment("unknown")
+            s.increment("unknown")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

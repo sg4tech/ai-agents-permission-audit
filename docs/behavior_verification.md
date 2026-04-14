@@ -346,8 +346,6 @@ pipe contexts (`cat /path | ...`) since those cannot be converted to `Read`.
 
 ---
 
----
-
 ## 12. Does `*` match a trailing `/` in directory arguments?
 
 **Status:** ✅ VERIFIED
@@ -364,10 +362,9 @@ pipe contexts (`cat /path | ...`) since those cannot be converted to `Read`.
 No dialog = allow rule fired first (auto-approved), then deny rule hard-blocked.
 This confirms `Bash(.venv/bin/* *)` matched `.venv/bin/pytest tests/ -q 2>&1`.
 
-**Conclusion:** `*` matches `/` when it is immediately followed by a space or
-end-of-string — i.e. a **trailing slash on a directory argument** (e.g. `tests/`).
-`*` does NOT match `/` in other positions (leading slash, mid-path separator,
-or slash before a non-space character like in `2>/dev/null`).
+**Conclusion:** `*` matches `/` in internal positions — this test confirmed it for
+a trailing slash on a directory argument (`tests/`). Combined with section 9 results,
+`*` blocks only a leading `/` and allows all internal `/` characters freely.
 
 **Implementation updated:** `_STAR` in `claude_glob.py` uses
 `(?!/)(?:(?!&&|\|\||[|;]).)*` — blocks leading `/` only, allows all internal `/`.
@@ -388,7 +385,7 @@ or slash before a non-space character like in `2>/dev/null`).
 | 8a | `<` is not an operator | ✅ VERIFIED |
 | 8b | Backslash escapes operators | ✅ VERIFIED |
 | 8c | Nested quotes protect operators | ✅ VERIFIED |
-| 9 | `*` does not match `/` | ✅ VERIFIED |
+| 9 | `*` does not match leading `/` | ✅ VERIFIED |
 | 10 | `**` matches `/` in Bash patterns | ✅ VERIFIED |
 | 11 | `Read(//path)` double-slash = absolute path | ✅ VERIFIED |
 | 12 | `*` matches trailing `/` in dir args (`tests/`) | ✅ VERIFIED |

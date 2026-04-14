@@ -80,10 +80,11 @@ _DOUBLE_STAR = r"(?:(?!&&|\|\||[|;]).)*"
 def glob_to_regex(pattern: str) -> re.Pattern[str]:
     """Compile a Claude Code glob *pattern* to a regular expression.
 
-    - ``*``  matches any character sequence that does not contain shell
-      operators (``&&``, ``||``, ``|``, ``;``) or forward slashes.
+    - ``*``  matches any character sequence that does not start with ``/``
+      and does not contain shell operators (``&&``, ``||``, ``|``, ``;``).
+      Internal forward slashes are allowed.
     - ``**`` matches any character sequence that does not contain shell
-      operators (slashes are allowed through).
+      operators (slashes are allowed freely, including leading ``/``).
     Redirects (``>``, ``>>``, ``<``, ``2>&1``) are allowed by both wildcards.
     """
     parts: list[str] = ["^"]

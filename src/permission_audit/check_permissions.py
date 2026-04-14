@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
 from permission_audit.claude_glob import find_repo_root, matches
@@ -254,16 +255,20 @@ def main(argv: list[str] | None = None) -> None:
             if not line or line.startswith("#"):
                 continue
             parts = line.split("\t")
-            if len(parts) >= 5:
-                # New format: total, auto, user, denied, command
-                user_count = int(parts[2])
-                if not args.all_commands and user_count == 0:
-                    continue  # skip auto-approved and denied-only commands
-                commands.append((int(parts[0]), parts[4]))
-            elif len(parts) == 2:
-                # Legacy format: no status info, include all
-                legacy_format = True
-                commands.append((int(parts[0]), parts[1]))
+            try:
+                if len(parts) >= 5:
+                    # New format: total, auto, user, denied, command
+                    user_count = int(parts[2])
+                    if not args.all_commands and user_count == 0:
+                        continue  # skip auto-approved and denied-only commands
+                    commands.append((int(parts[0]), parts[4]))
+                elif len(parts) == 2:
+                    # Legacy format: no status info, include all
+                    legacy_format = True
+                    commands.append((int(parts[0]), parts[1]))
+            except ValueError:
+                print(f"warning: skipping malformed line: {line!r}", file=sys.stderr)
+                continue
 
     not_allowed: list[tuple[int, str, bool, str]] = []
     denied: list[tuple[int, str, str]] = []
