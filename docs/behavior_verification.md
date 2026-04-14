@@ -101,23 +101,21 @@ as a splitting operator.
 
 ## 4. Compound commands: all segments must match
 
-**Status:** ⚠️ UNVERIFIABLE (methodology flaw — see note below)
+**Status:** ✅ VERIFIED
 
-**What we observed:**
-Rules `Bash(ls *)` in local settings, no `curl` rule in effect.
-Ran `ls /tmp && curl http://example.com --max-time 1 ...` — Claude Code showed
-a permission prompt for the full compound command.
+**How verified:**
+Removed `Bash(.venv/bin/pytest tests/ -v)` from settings. `ls /tmp` is
+auto-approved (bare name). Ran `ls /tmp && .venv/bin/pytest --version` —
+Claude Code showed a permission prompt for the full compound command.
 
-**Why this does NOT confirm the hypothesis:**
-Subsequent testing revealed that in conversational mode, most commands (wc, awk,
-xargs, bc) run freely without any allow rule.  The curl prompt is likely caused by
-**curl making a network request** (network access always prompts), not by the
-`&&` segment-matching logic.  Tested `ls src/ && xargs echo`, `ls src/ && bc <<<
-"1+1"` — both ran without prompts even though `xargs` and `bc` have no allow rules.
+Conclusion: a compound command containing any uncovered segment (here,
+`.venv/bin/pytest` without an allow rule) triggers a permission prompt
+for the whole compound command.
 
-**To verify properly:** Run in agentic mode (autonomous multi-step task). Add only
-`Bash(ls *)` to settings.  Ask Claude to perform a task that requires
-`ls && <non-network-uncovered-cmd>`.  If a prompt appears, segment matching is confirmed.
+**Notes:**
+- The prompt shows the **full compound command**, not just the uncovered segment.
+- Earlier testing was unreliable (user was approving prompts silently).
+  This result uses the "always-deny" methodology and is reliable.
 
 ---
 
@@ -232,7 +230,7 @@ quotes protecting the operator.
 | 1 | Exact patterns: prefix match | ✅ VERIFIED |
 | 2 | `*` blocked by `\|`, `&&`, `\|\|`, `;` | ✅ VERIFIED |
 | 3 | Redirects (`>`, `>>`, `<`, `2>&1`) not operators | ✅ VERIFIED |
-| 4 | Compound: all segments must match | ⚠️ UNVERIFIABLE |
+| 4 | Compound: all segments must match | ✅ VERIFIED |
 | 5 | Quoted operators are literals | ✅ VERIFIED |
 | 6 | Colon-style patterns | ✅ VERIFIED |
 | 7 | Deny beats allow | ✅ VERIFIED |

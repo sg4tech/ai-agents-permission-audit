@@ -153,19 +153,17 @@ class TestRedirectsNotOperators:
 
 
 # ===========================================================================
-# 4. COMPOUND COMMAND SEGMENT MATCHING                [UNVERIFIABLE]
+# 4. COMPOUND COMMAND SEGMENT MATCHING                [VERIFIED via live test]
 # ===========================================================================
-# Hypothesis: Claude Code allows a compound command if and only if EVERY
-# segment matches some allow rule.
+# A compound command triggers a permission prompt if ANY segment is not
+# covered by an allow rule (and is not a bare auto-approved utility name).
 #
-# UNVERIFIABLE via conversational mode: the earlier "confirmation" (ls &&
-# curl prompted) was likely due to curl making a network request, not due
-# to segment matching.  Tested ls && xargs, ls && bc — both ran without
-# prompts despite xargs/bc not being in any allow rule.  In conversational
-# mode most commands run freely.  To verify, an agentic-mode test is needed.
+# Verified: ls (bare name, auto-approved) && .venv/bin/pytest --version
+# (full path, no allow rule) → permission dialog appeared for the full
+# compound command. Uses always-deny methodology — result is reliable.
 
 class TestCompoundSegmentMatching:
-    """UNVERIFIABLE (conversational mode): all segments must match — our implementation."""
+    """VERIFIED: compound command prompts if any segment is not covered."""
 
     def test_compound_all_segments_allowed(self):
         ok, _ = check_command("git status && ls /", [], ["git *", "ls *"], [])
