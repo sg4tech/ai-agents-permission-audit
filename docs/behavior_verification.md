@@ -24,15 +24,14 @@ what this project originally assumed.
 ### What we observed
 
 Commands that ran **without any matching rule** in local or global settings:
-`grep`, `wc`, `awk`, `xargs`, `bc` — none of these appear in global `~/.claude/settings.json`
-or local `settings.local.json`, yet all ran without a permission prompt.
+`grep`, `wc`, `awk`, `xargs`, `bc`, `ls` (after removing `Bash(ls *)`)
 
-`ls` also ran without a prompt after `Bash(ls *)` was removed from local settings
-(no `ls` rule in global settings either).
+Most tellingly: `/tmp/claude_test_util` — a **custom script** created just for this
+test with a unique name that could not appear in any implicit allowlist — ran without
+a permission prompt both WITH and WITHOUT a `Bash(claude_test_util:*)` rule in settings.
 
-Note: `.venv/bin/pytest` was also tested but global settings contain `Bash(pytest:*)`;
-it is unknown whether Claude Code applies basename matching that would let
-`pytest:*` cover `.venv/bin/pytest` commands.
+This rules out the "implicit allowlist of known utilities" hypothesis.  In interactive
+mode, **all commands run freely** unless blocked by a deny rule or flagged for network access.
 
 Commands that **did** trigger a prompt or block:
 - `curl http://example.com` (network request) — triggered permission dialog
@@ -42,7 +41,7 @@ Commands that **did** trigger a prompt or block:
 
 | Mechanism | Behavior |
 |-----------|---------|
-| **Implicit allowlist** | Most common shell utilities and tools run freely — no allow rule needed |
+| **Default allow** | In interactive mode, all commands run freely — no allow rule required |
 | **Network commands** | Always trigger a permission prompt unless pre-approved |
 | **Deny rules** | Hard-block matching commands — always enforced, override allow rules |
 | **Allow rules** | Pre-approve commands (including network/risky) without prompting; also serve as documentation |
@@ -53,7 +52,9 @@ Allow rules appear to serve two purposes:
 1. **Pre-approve risky operations** (network, destructive) so they don't interrupt workflow
 2. **Document** which commands Claude is expected to run — useful for review and auditing
 
-They are NOT a strict whitelist that gates all command execution.
+They are NOT a strict whitelist that gates all command execution.  In interactive
+mode the default is **allow-all**; rules narrow that only for network/risky ops and
+explicit denies.
 
 ### Implication for this document
 
