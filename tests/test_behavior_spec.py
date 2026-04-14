@@ -410,3 +410,46 @@ class TestStarDoesNotMatchSlash:
     def test_double_star_still_blocks_operators(self):
         """VERIFIED: ** does not cross shell operators."""
         assert not matches("cat file | grep foo", "cat **")
+
+
+# ===========================================================================
+# 8. UNKNOWN — trailing * in «binary *» pattern with slash in argument
+# ===========================================================================
+# Observation: .venv/bin/pytest tests/ -q 2>&1 | tail -3 ran without a
+# permission dialog, even though the only matching rules in settings.json are
+#   Bash(.venv/bin/*)
+#   Bash(.venv/bin/* *)
+# Our model says both are False for this command because:
+#   - .venv/bin/*  → * must match "pytest tests/ -q 2>&1"; "tests/" contains /
+#   - .venv/bin/* * → second * must match "tests/ -q 2>&1"; "tests/" contains /
+#
+# Hypothesis A: Claude Code's trailing * in a «prefix *» pattern is more
+#   permissive than our model — it may match / when the fixed prefix already
+#   pins the binary (i.e., "whatever comes after the space").
+# Hypothesis B: The command was auto-approved via a session-level cache from
+#   an earlier approval within the same conversation, not by rule matching.
+# Hypothesis C: Claude Code has a built-in allowlist for .venv/bin/ paths
+#   that bypasses explicit rule matching.
+#
+# To verify: in a fresh session with always-deny methodology, run
+#   .venv/bin/pytest tests/ -q
+# with only Bash(.venv/bin/* *) in allow rules and no prior approval in
+# the session. If it runs without a prompt → Hypothesis A is correct.
+# If it shows a dialog → Hypothesis B (session cache) was the reason.
+
+class TestStarWithSlashInArgument:
+    """UNKNOWN: does trailing * match slash-containing arguments?"""
+
+    def test_our_model_says_star_star_space_star_no_slash(self):
+        """Our current model: second * in «.venv/bin/* *» does not match tests/."""
+        # This assertion documents our model's current behavior.
+        # If Claude Code live-testing contradicts this, update to HYPOTHESIZED/VERIFIED
+        # and flip the assertion.
+        assert not matches(".venv/bin/pytest tests/ -q 2>&1", ".venv/bin/* *")
+        assert not matches(".venv/bin/pytest tests/ -q 2>&1", ".venv/bin/*")
+
+    def test_double_star_in_arg_position_covers_slash(self):
+        """** in argument position does cover slash — use .venv/bin/** * as workaround."""
+        # Workaround rule that definitely covers the case:
+        assert matches(".venv/bin/pytest tests/ -q 2>&1", ".venv/bin/** *")
+        assert matches(".venv/bin/mypy src/ --strict", ".venv/bin/** *")
