@@ -7,6 +7,7 @@ Claude Code's `*` wildcard in `Bash(...)` permission patterns does **not** match
 This toolset helps you:
 
 - See which commands from your session history are **not covered** by your current allow rules
+- Understand **how each command was approved** — automatically by a rule, manually by you, or denied
 - Get **pattern suggestions** ranked by how many commands they would unblock
 - Find allow rules that are **redundant** (fully covered by another rule)
 
@@ -34,7 +35,32 @@ Run all commands from within your project directory (or any subdirectory). Resul
 claude-audit-extract
 ```
 
-Scans `~/.claude/projects/<slug>/` for JSONL session files, counts every `Bash` tool invocation, and writes `audit-output/claude_bash_commands.tsv`.
+Scans `~/.claude/projects/<slug>/` for JSONL session files, parses every `Bash` tool invocation, and writes `audit-output/claude_bash_commands.tsv`.
+
+Each command is tagged with an approval status inferred from the time delta between the tool request and its result:
+
+| Status | Meaning |
+|--------|---------|
+| `auto` | Delta &lt; 2 s — Claude Code approved instantly via a matching allow rule |
+| `user` | Delta ≥ 2 s — you approved via dialog, or a slow auto-approved command (see note) |
+| `denied` | Result contained the Claude Code permission denial message |
+
+Commands you approved manually (`user`) are the highest-priority candidates for new allow rules.
+
+Use `--threshold N` to adjust the auto/user cutoff (default: 2.0 s):
+
+```sh
+claude-audit-extract --threshold 3.0
+```
+
+> **Note:** slow commands auto-approved by a rule (e.g. `npm install`) will be classified as `user` because their execution time pushes the delta above the threshold. This is a known limitation.
+
+Console output includes a status summary:
+
+```
+Extracted 424 unique commands (468 total) -> audit-output/claude_bash_commands.tsv
+  auto: 293  user: 155  denied: 20
+```
 
 ### 2. Check commands against your permission rules
 
@@ -127,7 +153,7 @@ Operators inside quotes (`"a|b"`) or after backslash (`\|`) are treated as liter
 pytest
 ```
 
-188 unit tests covering the glob matcher, permission checker, and behavioral specification.
+Unit tests covering the glob matcher, permission checker, approval-status extraction, and behavioral specification.
 
 ## License
 

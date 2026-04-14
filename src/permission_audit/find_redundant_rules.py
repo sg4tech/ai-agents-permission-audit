@@ -66,8 +66,12 @@ def main(argv: list[str] | None = None) -> None:
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
-                parts = line.split("\t", 1)
-                if len(parts) == 2:
+                parts = line.split("\t")
+                if len(parts) >= 5:
+                    # New format: total, auto, user, denied, command
+                    real_commands.append(parts[4])
+                elif len(parts) == 2:
+                    # Legacy format: count, command
                     real_commands.append(parts[1])
 
     # For each rule, find real commands it matches.

@@ -58,10 +58,17 @@ def _mask_quoted_operators(cmd: str) -> str:
 
 
 # Regex fragment for ``*``: matches any character sequence that does NOT
-# contain shell operators OR forward slashes.
-# VERIFIED: ``*`` does not match ``/`` — ``Bash(cat *)`` covers ``cat file.txt``
-# but NOT ``cat /etc/hosts``.  Use ``**`` for paths containing slashes.
-_STAR = r"(?:(?!&&|\|\||[|;])[^/])*"
+# contain shell operators and does NOT start with ``/``.
+# Internal ``/`` characters are allowed — only a leading ``/`` is blocked.
+#
+# VERIFIED:
+#   ``*`` does NOT match a leading ``/`` (absolute paths):
+#     ``Bash(cat *)`` covers ``cat README.md`` but NOT ``cat /etc/hosts``.
+#   ``*`` DOES match paths with internal slashes as long as they do not start with ``/``:
+#     ``Bash(.venv/bin/* *)`` auto-approved ``.venv/bin/pytest tests/ -q 2>&1``
+#     ``Bash(cat *)`` auto-approved ``cat src/permission_audit/claude_glob.py | wc -l``
+#     Both verified via always-deny (immediate hard-block, no dialog).
+_STAR = r"(?!/)(?:(?!&&|\|\||[|;]).)*"
 
 # Regex fragment for ``**``: matches any character sequence that does NOT
 # contain shell operators (slashes are allowed).
@@ -73,10 +80,11 @@ _DOUBLE_STAR = r"(?:(?!&&|\|\||[|;]).)*"
 def glob_to_regex(pattern: str) -> re.Pattern[str]:
     """Compile a Claude Code glob *pattern* to a regular expression.
 
-    - ``*``  matches any character sequence that does not contain shell
-      operators (``&&``, ``||``, ``|``, ``;``) or forward slashes.
+    - ``*``  matches any character sequence that does not start with ``/``
+      and does not contain shell operators (``&&``, ``||``, ``|``, ``;``).
+      Internal forward slashes are allowed.
     - ``**`` matches any character sequence that does not contain shell
-      operators (slashes are allowed through).
+      operators (slashes are allowed freely, including leading ``/``).
     Redirects (``>``, ``>>``, ``<``, ``2>&1``) are allowed by both wildcards.
     """
     parts: list[str] = ["^"]

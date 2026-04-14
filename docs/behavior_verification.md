@@ -280,14 +280,20 @@ Also verified the compound positive case using always-deny methodology:
 `git status | python3 -c "print(1)"` — executed without prompt (both segments covered:
 `git status:*` and `python3:*`).
 
-**Conclusion:** `*` in Bash permission patterns matches any character sequence **except
-`/`**. This mirrors standard glob semantics. To cover commands with absolute paths,
-use `**` (see §10) or an explicit prefix pattern (e.g. `Bash(cat /tmp/*)`).
+**Conclusion:** `*` in Bash permission patterns blocks only a **leading `/`** (i.e.
+arguments that start with `/`).  Internal slashes — including paths like
+`tests/file.py`, `src/foo/bar.py`, or redirect targets like `2>/dev/null` — are
+matched by `*` as long as the matched sequence does not start with `/`.
 
-**Impact on redirect targets:** Whether Claude Code strips redirect targets (e.g.
-`> /dev/null`) before glob matching is **unverified**. Conservatively, use `**` or
-exact patterns when redirect targets contain absolute paths. `2>&1` has no slash
-and is safely covered by `*`.
+**Additional verification (always-deny):**
+- `cat src/permission_audit/claude_glob.py | wc -l` hard-blocked by deny `Bash(cat *)` —
+  two internal slashes, no leading slash → `*` matched ✓
+
+**Impact on redirect targets:** `grep foo 2>/dev/null` is matched by `Bash(grep *)`
+in our model (matched portion `foo 2>/dev/null` starts with `f`). Whether Claude Code
+strips redirect targets before matching is still unverified, but our model now says
+`*` covers them. Use `**` or an exact pattern only if you need to match the redirect
+target itself as part of the pattern.
 
 ---
 
@@ -340,6 +346,31 @@ pipe contexts (`cat /path | ...`) since those cannot be converted to `Read`.
 
 ---
 
+## 12. Does `*` match a trailing `/` in directory arguments?
+
+**Status:** ✅ VERIFIED
+
+**Hypothesis A confirmed.**
+
+**How verified (always-deny methodology):**
+1. Removed `Bash(.venv/bin/*)` from `~/.claude/settings.json`; kept only `Bash(.venv/bin/* *)`.
+2. Added `"deny": ["Bash(.venv/bin/* *)"]` to `.claude/settings.local.json`.
+3. In a fresh session, ran `.venv/bin/pytest tests/ -q`.
+4. Result: immediate hard-block — "Permission to use Bash with command
+   .venv/bin/pytest tests/ -q 2>&1 has been denied." — **no dialog appeared**.
+
+No dialog = allow rule fired first (auto-approved), then deny rule hard-blocked.
+This confirms `Bash(.venv/bin/* *)` matched `.venv/bin/pytest tests/ -q 2>&1`.
+
+**Conclusion:** `*` matches `/` in internal positions — this test confirmed it for
+a trailing slash on a directory argument (`tests/`). Combined with section 9 results,
+`*` blocks only a leading `/` and allows all internal `/` characters freely.
+
+**Implementation updated:** `_STAR` in `claude_glob.py` uses
+`(?!/)(?:(?!&&|\|\||[|;]).)*` — blocks leading `/` only, allows all internal `/`.
+
+---
+
 ## Summary table
 
 | # | Behavior | Status |
@@ -354,6 +385,7 @@ pipe contexts (`cat /path | ...`) since those cannot be converted to `Read`.
 | 8a | `<` is not an operator | ✅ VERIFIED |
 | 8b | Backslash escapes operators | ✅ VERIFIED |
 | 8c | Nested quotes protect operators | ✅ VERIFIED |
-| 9 | `*` does not match `/` | ✅ VERIFIED |
+| 9 | `*` does not match leading `/` | ✅ VERIFIED |
 | 10 | `**` matches `/` in Bash patterns | ✅ VERIFIED |
 | 11 | `Read(//path)` double-slash = absolute path | ✅ VERIFIED |
+| 12 | `*` matches trailing `/` in dir args (`tests/`) | ✅ VERIFIED |

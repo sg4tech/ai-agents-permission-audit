@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
 from permission_audit.claude_glob import find_repo_root, matches
@@ -235,19 +236,39 @@ def main(argv: list[str] | None = None) -> None:
         default=repo_root / "audit-output",
         help="Directory for output TSV files",
     )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_commands",
+        help="Include all commands regardless of approval status (default: user-approved only)."
+             " Also needed to see commands that were only ever denied (denied > 0, user = 0).",
+    )
     args = parser.parse_args(argv)
 
     deny, allow_local, allow_global = load_rules(args.settings, args.global_settings)
 
     commands: list[tuple[int, str]] = []
+    legacy_format = False
     with open(args.input) as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            parts = line.split("\t", 1)
-            if len(parts) == 2:
-                commands.append((int(parts[0]), parts[1]))
+            parts = line.split("\t")
+            try:
+                if len(parts) >= 5:
+                    # New format: total, auto, user, denied, command
+                    user_count = int(parts[2])
+                    if not args.all_commands and user_count == 0:
+                        continue  # skip auto-approved and denied-only commands
+                    commands.append((int(parts[0]), parts[4]))
+                elif len(parts) == 2:
+                    # Legacy format: no status info, include all
+                    legacy_format = True
+                    commands.append((int(parts[0]), parts[1]))
+            except ValueError:
+                print(f"warning: skipping malformed line: {line!r}", file=sys.stderr)
+                continue
 
     not_allowed: list[tuple[int, str, bool, str]] = []
     denied: list[tuple[int, str, str]] = []
@@ -280,7 +301,14 @@ def main(argv: list[str] | None = None) -> None:
     simple_count = sum(1 for _, _, comp, _ in not_allowed if not comp)
     compound_inv = sum(c for c, _, _ in compound_not_allowed)
 
-    print(f"Commands checked: {len(commands)} unique")
+    if legacy_format:
+        status_note = " (status filter skipped — legacy format)"
+    elif args.all_commands:
+        status_note = ""
+    else:
+        status_note = " (user-approved; use --all for full history)"
+
+    print(f"Commands checked: {len(commands)} unique{status_note}")
     print(f"Not allowed:  {len(not_allowed)} unique ({total_inv} invocations)")
     print(f"  simple:     {simple_count}")
     print(f"  compound:   {len(compound_not_allowed)} ({compound_inv} invocations)")
