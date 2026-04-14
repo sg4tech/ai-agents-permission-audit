@@ -3,8 +3,19 @@
 Each test documents *observed or inferred* behavior of Claude Code's
 permission system.  Tests are annotated with their verification status:
 
-    VERIFIED     — confirmed by live testing against Claude Code
-    HYPOTHESIZED — inferred from docs or code analysis; not yet live-tested
+    VERIFIED       — confirmed by live testing against Claude Code
+    HYPOTHESIZED   — inferred from docs or code analysis; not yet live-tested
+    UNVERIFIABLE   — cannot be confirmed via conversational-mode live tests;
+                     requires agentic-mode testing (see note below)
+
+Methodology note
+----------------
+Live tests run in *conversational mode* (user watches every step) are
+unreliable for verifying allow-rule matching.  In that mode most commands
+run freely regardless of whether an allow rule matches — only DENY rules
+and network access are consistently enforced.  Tests confirming a command
+*was blocked* are reliable; tests confirming a command *ran without a prompt*
+are NOT reliable for allow-rule verification.
 
 Verification procedure
 ----------------------
@@ -117,18 +128,19 @@ class TestFdRedirectsNotOperators:
 
 
 # ===========================================================================
-# 4. COMPOUND COMMAND SEGMENT MATCHING                [VERIFIED via live test]
+# 4. COMPOUND COMMAND SEGMENT MATCHING                [UNVERIFIABLE]
 # ===========================================================================
-# Claude Code allows a compound command if and only if EVERY segment matches
-# some allow rule.  The full string is tried first; if it matches, segments
-# are not checked.
+# Hypothesis: Claude Code allows a compound command if and only if EVERY
+# segment matches some allow rule.
 #
-# Verified: rules=[Bash(ls *)], ran "ls /tmp && curl http://example.com ..."
-# A permission prompt appeared — confirming curl (uncovered) triggered it.
-# Commands where all segments ARE covered run silently.
+# UNVERIFIABLE via conversational mode: the earlier "confirmation" (ls &&
+# curl prompted) was likely due to curl making a network request, not due
+# to segment matching.  Tested ls && xargs, ls && bc — both ran without
+# prompts despite xargs/bc not being in any allow rule.  In conversational
+# mode most commands run freely.  To verify, an agentic-mode test is needed.
 
 class TestCompoundSegmentMatching:
-    """VERIFIED: all segments must match for a compound command to be allowed."""
+    """UNVERIFIABLE (conversational mode): all segments must match — our implementation."""
 
     def test_compound_all_segments_allowed(self):
         ok, _ = check_command("git status && ls /", [], ["git *", "ls *"], [])
@@ -159,18 +171,18 @@ class TestCompoundSegmentMatching:
 
 
 # ===========================================================================
-# 5. QUOTED OPERATORS ARE LITERALS                    [HYPOTHESIZED]
+# 5. QUOTED OPERATORS ARE LITERALS                    [UNVERIFIABLE]
 # ===========================================================================
 # Hypothesis: operators inside single or double quotes are treated as
 # literal characters — they do not split the command and * can match them.
 #
-# To verify: set allow=[Bash(grep *)], try:
-#   grep -n "^def \|^class " src/foo.py   → expected: allowed
-#   python -c "import os; print(1)"        → expected: allowed
-# If Claude Code prompts for permission, the hypothesis is wrong.
+# Commands like grep -n "^def \|^class " ran without prompts, consistent
+# with the hypothesis.  But conversational mode does not enforce allow rules,
+# so we cannot confirm whether the quoted | was parsed as literal or the
+# command just ran freely.
 
 class TestQuotedOperatorsAreLiterals:
-    """HYPOTHESIZED: operators inside quotes do not split the command."""
+    """UNVERIFIABLE (conversational mode): operators inside quotes — our implementation."""
 
     def test_pipe_in_double_quotes(self):
         assert matches('grep -n "^def \\|^class " src/foo.py', "grep *")

@@ -8,6 +8,34 @@ permission-matching behavior.  Each section corresponds to a test class in
 - ✅ VERIFIED — confirmed by live test
 - ❌ REFUTED — hypothesis was wrong; see notes
 - 🔲 HYPOTHESIZED — not yet tested against real Claude Code
+- ⚠️ UNVERIFIABLE — methodology does not allow reliable confirmation
+
+---
+
+## ⚠️ Critical methodology note: conversational vs agentic mode
+
+All live tests in this document are run in **conversational mode** — an interactive
+Claude Code session where the user watches every step.  This mode behaves
+**differently** from agentic mode:
+
+| Mode | Allow rules | Deny rules | Network commands |
+|------|------------|-----------|-----------------|
+| **Agentic** (autonomous multi-step) | Enforced — unlisted commands prompt | Enforced | Always prompt |
+| **Conversational** (user watches) | Largely unenforced — most commands run freely | Enforced | Prompt |
+
+**Evidence for this distinction:**
+- `ls /tmp` ran without a prompt after removing `Bash(ls *)` from settings
+- `bc`, `awk`, `xargs`, `wc` all ran without any allow rule
+- `git status` was hard-blocked by a deny rule (deny rules apply in both modes)
+- `curl http://example.com` prompted in conversational mode (network access is flagged regardless of mode)
+
+**Implication for this document:**
+- Tests that confirm a command **was blocked** (deny tests, network prompts) are reliable
+- Tests that confirm a command **ran without a prompt** in conversational mode are
+  **not reliable** for verifying allow-rule matching — the command may have run freely
+  regardless of whether the pattern matched
+- Only tests run in an agentic context (autonomous task execution) can reliably
+  verify allow-rule matching behavior
 
 ---
 
@@ -53,42 +81,43 @@ as a splitting operator.
 
 ## 4. Compound commands: all segments must match
 
-**Status:** ✅ VERIFIED
+**Status:** ⚠️ UNVERIFIABLE (methodology flaw — see note below)
 
-**How verified:**
+**What we observed:**
 Rules `Bash(ls *)` in local settings, no `curl` rule in effect.
 Ran `ls /tmp && curl http://example.com --max-time 1 ...` — Claude Code showed
-a permission prompt for the full compound command. Conclusion: when any segment
-is not covered, the compound command requires approval.
+a permission prompt for the full compound command.
 
-**Notes:**
-- The permission prompt showed the **full compound command string**, not just the
-  uncovered segment. Claude Code does not tell you which segment triggered it.
-- The full-string pattern test (#4 step 4 above) was not separately verified, but
-  the segmented-match logic is confirmed by the ALLOW case (covered segments run
-  silently) and the PROMPT case (uncovered segment triggers prompt).
+**Why this does NOT confirm the hypothesis:**
+Subsequent testing revealed that in conversational mode, most commands (wc, awk,
+xargs, bc) run freely without any allow rule.  The curl prompt is likely caused by
+**curl making a network request** (network access always prompts), not by the
+`&&` segment-matching logic.  Tested `ls src/ && xargs echo`, `ls src/ && bc <<<
+"1+1"` — both ran without prompts even though `xargs` and `bc` have no allow rules.
+
+**To verify properly:** Run in agentic mode (autonomous multi-step task). Add only
+`Bash(ls *)` to settings.  Ask Claude to perform a task that requires
+`ls && <non-network-uncovered-cmd>`.  If a prompt appears, segment matching is confirmed.
 
 ---
 
 ## 5. Operators inside quotes are literals
 
-**Status:** 🔲 HYPOTHESIZED
+**Status:** ⚠️ UNVERIFIABLE (methodology flaw — see note below)
 
-**How to verify:**
+**What we observed:**
+- `grep -n "^def \|^class " src/...` ran without prompt (double-quoted `|`)
+- `grep -c '^def \|^class ' src/...` ran without prompt (single-quoted `|`)
+- These are consistent with the hypothesis.
 
-1. Add to `.claude/settings.local.json`:
-   ```json
-   { "permissions": { "allow": ["Bash(grep *)"] } }
-   ```
-2. Ask Claude to run: `grep -n "^def \|^class " src/foo.py`
-   - Expected if hypothesis correct: **runs without prompt**
-3. Ask Claude to run: `python -c "import os; print(os.getcwd())"`
-   - Add `Bash(python *)` to allow first
-   - Expected if hypothesis correct: **runs without prompt**
-4. Ask Claude to run: `grep "a|b" file | head -5`
-   - Expected: **prompts** (unquoted `|` after the quoted `|` still splits)
+**Why this does NOT confirm the hypothesis:**
+Conversational mode does not enforce allow rules. The commands likely ran freely
+regardless of whether the quoted `|` was parsed correctly. We cannot distinguish
+"quoted operator is literal → single segment → matches `grep *`" from "conversational
+mode ignores allow rules → runs freely".
 
-**Record result here.**
+**To verify properly:** Requires agentic mode test OR a negative test where a
+mis-parsed command would produce a string that definitely doesn't match any rule.
 
 ---
 
@@ -150,29 +179,29 @@ without a permission prompt. Conclusion: `<` is NOT an operator in Claude Code.
 
 ### 8b. Backslash-escaped operators outside quotes
 
-**Status:** 🔲 UNKNOWN
+**Status:** ⚠️ UNVERIFIABLE (methodology flaw)
 
 **Question:** Does `grep foo\|bar` treat `\|` as a literal pipe or as an operator?
 
-**How to verify:**
-1. Add `Bash(grep *)` to allow.
-2. Ask Claude to run: `grep foo\|bar file`
-   - If **runs without prompt** → backslash escapes the operator (our impl is correct)
-   - If **prompts** → backslash is not recognized as escape
+**What we observed:**
+`grep -c foo\|bar src/...` ran without prompt.  Consistent with backslash escaping.
+
+**Why unverifiable:** Conversational mode does not enforce allow rules for most
+commands.  Cannot distinguish "backslash escape works" from "ran freely".
 
 ---
 
 ### 8c. Nested quotes
 
-**Status:** 🔲 UNKNOWN
+**Status:** ⚠️ UNVERIFIABLE (methodology flaw)
 
 **Question:** In `echo "he said 'hello | world'"`, does the inner `|` split the command?
 
-**How to verify:**
-1. Add `Bash(echo *)` to allow.
-2. Ask Claude to run: `echo "he said 'hello | world'"`
-   - If **runs without prompt** → inner quotes protect the operator
-   - If **prompts** → inner single quotes inside double quotes are not parsed
+**What we observed:**
+`echo "he said 'hello | world'"` ran without prompt.  Consistent with nested
+quotes protecting the operator.
+
+**Why unverifiable:** Same as 8b — conversational mode does not enforce allow rules.
 
 ---
 
@@ -183,10 +212,10 @@ without a permission prompt. Conclusion: `<` is NOT an operator in Claude Code.
 | 1 | Exact patterns: prefix match | ✅ VERIFIED |
 | 2 | `*` blocked by operators | ✅ VERIFIED |
 | 3 | `2>&1` not an operator | ✅ VERIFIED |
-| 4 | Compound: all segments must match | ✅ VERIFIED |
-| 5 | Quoted operators are literals | 🔲 HYPOTHESIZED |
+| 4 | Compound: all segments must match | ⚠️ UNVERIFIABLE |
+| 5 | Quoted operators are literals | ⚠️ UNVERIFIABLE |
 | 6 | Colon-style patterns | ✅ VERIFIED |
 | 7 | Deny beats allow | ✅ VERIFIED |
 | 8a | `<` is not an operator | ✅ VERIFIED |
-| 8b | Backslash escapes operators | 🔲 UNKNOWN |
-| 8c | Nested quotes protect operators | 🔲 UNKNOWN |
+| 8b | Backslash escapes operators | ⚠️ UNVERIFIABLE |
+| 8c | Nested quotes protect operators | ⚠️ UNVERIFIABLE |
