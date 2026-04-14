@@ -23,9 +23,16 @@ what this project originally assumed.
 
 ### What we observed
 
-Commands that ran **without any allow rule** in settings:
-`ls`, `grep`, `cat`, `echo`, `wc`, `awk`, `sort`, `xargs`, `bc`, `sed`, `find`,
-`pytest`, `.venv/bin/pytest tests/ -v`, `.venv/bin/pytest tests/ -v --removed-from-settings`
+Commands that ran **without any matching rule** in local or global settings:
+`grep`, `wc`, `awk`, `xargs`, `bc` — none of these appear in global `~/.claude/settings.json`
+or local `settings.local.json`, yet all ran without a permission prompt.
+
+`ls` also ran without a prompt after `Bash(ls *)` was removed from local settings
+(no `ls` rule in global settings either).
+
+Note: `.venv/bin/pytest` was also tested but global settings contain `Bash(pytest:*)`;
+it is unknown whether Claude Code applies basename matching that would let
+`pytest:*` cover `.venv/bin/pytest` commands.
 
 Commands that **did** trigger a prompt or block:
 - `curl http://example.com` (network request) — triggered permission dialog
