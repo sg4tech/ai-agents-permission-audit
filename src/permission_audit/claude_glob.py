@@ -23,7 +23,7 @@ _MASK = {"|": "\x01", ";": "\x02", "&": "\x03"}
 
 
 def _mask_quoted_operators(cmd: str) -> str:
-    """Replace ``|;&>`` inside quotes or after backslash with placeholders.
+    """Replace ``|;&`` inside quotes or after backslash with placeholders.
 
     This lets the glob regex treat quoted/escaped operators as ordinary
     characters while still blocking unquoted ones.

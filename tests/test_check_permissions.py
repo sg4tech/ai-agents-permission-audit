@@ -72,6 +72,18 @@ class TestSplitCommand:
             "cat",
         ]
 
+    # --- Backslash escaping ---
+    def test_backslash_escaped_pipe_no_split(self):
+        """VERIFIED: \\| is a literal — backslash escapes the operator."""
+        assert _split_command("grep foo\\|bar file") == ["grep foo\\|bar file"]
+
+    def test_backslash_escaped_pipe_in_compound(self):
+        """Backslash escapes | but unquoted | still splits."""
+        assert _split_command("echo hello\\|ls /tmp | cat") == [
+            "echo hello\\|ls /tmp",
+            "cat",
+        ]
+
     # --- Quoting ---
     def test_double_quotes_protect_pipe(self):
         assert _split_command('grep "a|b" file') == ['grep "a|b" file']

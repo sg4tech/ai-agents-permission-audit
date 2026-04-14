@@ -99,6 +99,13 @@ def _split_command(cmd: str) -> list[str]:
             i += 1
             continue
 
+        # Backslash escapes the next character outside quotes.
+        if c == "\\" and not in_single and i + 1 < len(cmd):
+            current.append(c)
+            current.append(cmd[i + 1])
+            i += 2
+            continue
+
         # && or ||
         if c in ("&", "|") and i + 1 < len(cmd) and cmd[i + 1] == c:
             _flush()

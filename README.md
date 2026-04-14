@@ -127,7 +127,7 @@ Operators inside quotes (`"a|b"`) or after backslash (`\|`) are treated as liter
 pytest
 ```
 
-179 unit tests covering the glob matcher, permission checker, and behavioral specification.
+188 unit tests covering the glob matcher, permission checker, and behavioral specification.
 
 ## License
 
