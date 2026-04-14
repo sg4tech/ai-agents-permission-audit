@@ -4,7 +4,7 @@
 
 Audit toolset for Claude Code permission rules. Three scripts that work together:
 
-1. **`extract_bash_commands.py`** — scans `~/.claude/projects/<slug>/*.jsonl` for `tool_use` Bash blocks and writes a frequency-sorted TSV with per-command approval-status breakdown (`auto` / `user` / `denied`)
+1. **`extract_bash_commands.py`** — recursively scans `~/.claude/projects/<slug>/` for JSONL session files, parses `tool_use` Bash blocks, and writes a frequency-sorted TSV with per-command approval-status breakdown (`auto` / `user` / `denied`)
 2. **`check_permissions.py`** — reads that TSV and checks each command against `allow`/`deny` rules from `settings.local.json` and `~/.claude/settings.json`
 3. **`find_redundant_rules.py`** — finds allow rules that are fully covered by another rule
 

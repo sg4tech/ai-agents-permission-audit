@@ -10,8 +10,9 @@ tool_result timestamps:
 
 * **auto**   — delta < threshold (default 2 s); Claude Code approved
   the command instantly via a matching allow rule.
-* **user**   — delta >= threshold; the user saw the approval dialog
-  and clicked "Allow" manually.
+* **user**   — delta >= threshold; either the user approved via the dialog,
+  or a slow auto-approved command pushed the delta above the threshold
+  (see note below).
 * **denied** — the tool_result text contains the Claude Code permission
   denial message (``"Permission to use Bash with command … has been denied."``).
 
@@ -36,6 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -63,12 +65,29 @@ class CommandStats:
     """Per-command approval-status counters."""
 
     auto: int = 0    # approved instantly by allow rule
-    user: int = 0    # user approved manually (slow delta)
+    user: int = 0    # slow delta: user approved via dialog, or slow auto-approved command
     denied: int = 0  # blocked by permission check
+
+    def __post_init__(self) -> None:
+        if self.auto < 0 or self.user < 0 or self.denied < 0:
+            raise ValueError(
+                f"CommandStats counters must be non-negative: {self!r}"
+            )
 
     @property
     def total(self) -> int:
         return self.auto + self.user + self.denied
+
+    def increment(self, status: str) -> None:
+        """Increment the counter for *status* (``'auto'``, ``'user'``, or ``'denied'``)."""
+        if status == "auto":
+            self.auto += 1
+        elif status == "user":
+            self.user += 1
+        elif status == "denied":
+            self.denied += 1
+        else:
+            raise ValueError(f"Unknown status: {status!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +122,15 @@ def _classify_status(
     result_text: str,
     threshold_s: float = _AUTO_THRESHOLD_S,
 ) -> str:
-    """Return ``'auto'``, ``'user'``, or ``'denied'``."""
+    """Return ``'auto'``, ``'user'``, or ``'denied'``.
+
+    Denial is checked first (regex on *result_text*) regardless of timestamps.
+    When either timestamp is ``None``, returns ``'user'``.
+    Otherwise returns ``'auto'`` if
+    ``(result_ts - use_ts).total_seconds() < threshold_s``, else ``'user'``.
+    A negative delta (clock skew / out-of-order records) is treated as ``'auto'``
+    since it is less than the threshold.
+    """
     if _DENIED_RE.search(result_text):
         return "denied"
     if use_ts is None or result_ts is None:
@@ -150,7 +177,8 @@ def extract_commands_with_status(
     Each file is processed in order.  For each ``tool_use`` / ``tool_result``
     pair the delta between their timestamps determines the approval status.
     Commands whose ``tool_use`` has no matching ``tool_result`` in the file
-    are silently skipped (conversation ended before the result was recorded).
+    are silently skipped (e.g. the session was interrupted, or the result
+    appears in a different file).
     """
     stats: dict[str, CommandStats] = {}
 
@@ -160,7 +188,8 @@ def extract_commands_with_status(
 
         try:
             fh = open(path)
-        except OSError:
+        except OSError as exc:
+            print(f"warning: skipping {path}: {exc}", file=sys.stderr)
             continue
 
         with fh:
@@ -200,17 +229,15 @@ def extract_commands_with_status(
 
                         result_text = _get_tool_result_text(block)
                         if not result_text:
-                            result_text = rec.get("toolUseResult", "")
+                            # Fallback: some Claude Code schema variants store the
+                            # result text at the top-level record field instead of
+                            # inside the block content.
+                            fallback = rec.get("toolUseResult", "")
+                            if fallback:
+                                result_text = fallback
 
                         status = _classify_status(use_ts, rec_ts, result_text, threshold_s)
-
-                        entry = stats.setdefault(cmd, CommandStats())
-                        if status == "auto":
-                            entry.auto += 1
-                        elif status == "user":
-                            entry.user += 1
-                        else:
-                            entry.denied += 1
+                        stats.setdefault(cmd, CommandStats()).increment(status)
 
     return stats
 

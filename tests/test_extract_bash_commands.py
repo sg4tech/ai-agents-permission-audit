@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from permission_audit.extract_bash_commands import (
     CommandStats,
     _classify_status,
@@ -121,6 +123,13 @@ class TestClassifyStatus:
         t1 = t0 + timedelta(seconds=1.5)
         assert _classify_status(t0, t1, "output", threshold_s=1.0) == "user"
         assert _classify_status(t0, t1, "output", threshold_s=2.0) == "auto"
+
+    def test_negative_delta_classified_as_auto(self):
+        """Result timestamp before use timestamp (clock skew) → delta < 0 < threshold → auto."""
+        from datetime import datetime, timezone, timedelta
+        t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        t1 = t0 - timedelta(seconds=2.0)  # result is 2 s before the request
+        assert _classify_status(t0, t1, "output") == "auto"
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +308,29 @@ class TestExtractCommandsWithStatus:
         stats = extract_commands_with_status([f])
         assert stats["rm -rf /tmp/x"].denied == 1
 
+    def test_denied_via_tool_use_result_fallback(self, tmp_path):
+        """block.content is empty but top-level toolUseResult carries the denial message."""
+        f = tmp_path / "s.jsonl"
+        rec = {
+            "type": "user",
+            "timestamp": _ts(0.1),
+            "toolUseResult": "Permission to use Bash with command cat has been denied.",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "id1",
+                        "content": "",  # empty — triggers toolUseResult fallback
+                        "is_error": False,
+                    }
+                ],
+            },
+        }
+        _write_jsonl(f, [_tool_use_record("id1", "cat /etc/passwd", ts_offset=0.0), rec])
+        stats = extract_commands_with_status([f])
+        assert stats["cat /etc/passwd"].denied == 1
+
 
 # ---------------------------------------------------------------------------
 # write_tsv
@@ -307,15 +339,27 @@ class TestExtractCommandsWithStatus:
 class TestWriteTsv:
     def test_format(self, tmp_path):
         stats = {
-            "git status": CommandStats(auto=3, user=1, denied=0),
-            "rm -rf /": CommandStats(auto=0, user=0, denied=2),
+            "git status": CommandStats(auto=3, user=1, denied=0),  # total=4
+            "rm -rf /": CommandStats(auto=0, user=0, denied=2),    # total=2
         }
         out = tmp_path / "out.tsv"
         write_tsv(stats, out)
         lines = [ln for ln in out.read_text().splitlines() if not ln.startswith("#")]
-        # sorted by total desc: rm (2), git (4) → git first
+        # sorted by total desc: git (4) first, then rm (2)
         assert lines[0].startswith("4\t3\t1\t0\tgit status")
         assert lines[1].startswith("2\t0\t0\t2\trm -rf /")
+
+    def test_sort_stability_equal_totals(self, tmp_path):
+        """Commands with equal totals preserve insertion order (stable sort)."""
+        stats = {
+            "aaa": CommandStats(auto=1, user=0, denied=0),  # total=1
+            "zzz": CommandStats(auto=0, user=1, denied=0),  # total=1
+        }
+        out = tmp_path / "out.tsv"
+        write_tsv(stats, out)
+        lines = [ln for ln in out.read_text().splitlines() if not ln.startswith("#")]
+        assert lines[0].endswith("aaa")
+        assert lines[1].endswith("zzz")
 
     def test_columns(self, tmp_path):
         stats = {"echo hi": CommandStats(auto=1, user=2, denied=3)}
@@ -382,9 +426,54 @@ class TestCheckPermissionsReadsNewFormat:
         assert "git status" not in not_allowed
 
 
+# ---------------------------------------------------------------------------
+# CommandStats: validation and increment method
+# ---------------------------------------------------------------------------
+
+class TestCommandStats:
+    def test_total_property(self):
+        assert CommandStats(auto=3, user=2, denied=1).total == 6
+
+    def test_negative_auto_raises(self):
+        with pytest.raises(ValueError, match="non-negative"):
+            CommandStats(auto=-1)
+
+    def test_negative_user_raises(self):
+        with pytest.raises(ValueError, match="non-negative"):
+            CommandStats(user=-1)
+
+    def test_negative_denied_raises(self):
+        with pytest.raises(ValueError, match="non-negative"):
+            CommandStats(denied=-1)
+
+    def test_increment_auto(self):
+        s = CommandStats()
+        s.increment("auto")
+        assert s.auto == 1 and s.user == 0 and s.denied == 0
+
+    def test_increment_user(self):
+        s = CommandStats()
+        s.increment("user")
+        assert s.user == 1 and s.auto == 0 and s.denied == 0
+
+    def test_increment_denied(self):
+        s = CommandStats()
+        s.increment("denied")
+        assert s.denied == 1 and s.auto == 0 and s.user == 0
+
+    def test_increment_unknown_raises(self):
+        s = CommandStats()
+        with pytest.raises(ValueError, match="Unknown status"):
+            s.increment("unknown")
+
+
+# ---------------------------------------------------------------------------
+# find_redundant_rules TSV format compatibility
+# ---------------------------------------------------------------------------
+
 class TestFindRedundantReadsNewFormat:
-    def test_reads_new_tsv(self, tmp_path):
-        """find_redundant_rules reads the new TSV format for real commands."""
+    def test_reads_new_tsv(self, tmp_path, capsys):
+        """find_redundant_rules reads the new TSV format and finds redundant rules."""
         from permission_audit.find_redundant_rules import main as redundant_main
 
         tsv = tmp_path / "commands.tsv"
@@ -395,5 +484,23 @@ class TestFindRedundantReadsNewFormat:
             "permissions": {"allow": ["Bash(git status)", "Bash(git *)"], "deny": []}
         }))
 
-        # Should run without error; git status is covered by both rules → redundant
         redundant_main(["--settings", str(settings), "--input", str(tsv)])
+        out = capsys.readouterr().out
+        # git status is covered by both rules → at least one is redundant
+        assert "REDUNDANT" in out or "redundant" in out.lower()
+
+    def test_reads_old_tsv(self, tmp_path, capsys):
+        """find_redundant_rules handles legacy count\tcmd format."""
+        from permission_audit.find_redundant_rules import main as redundant_main
+
+        tsv = tmp_path / "commands.tsv"
+        tsv.write_text("3\tgit status\n")
+
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({
+            "permissions": {"allow": ["Bash(git status)", "Bash(git *)"], "deny": []}
+        }))
+
+        redundant_main(["--settings", str(settings), "--input", str(tsv)])
+        out = capsys.readouterr().out
+        assert "REDUNDANT" in out or "redundant" in out.lower()
