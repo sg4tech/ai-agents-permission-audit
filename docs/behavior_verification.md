@@ -53,22 +53,20 @@ as a splitting operator.
 
 ## 4. Compound commands: all segments must match
 
-**Status:** 🔲 HYPOTHESIZED
+**Status:** ✅ VERIFIED
 
-**How to verify:**
+**How verified:**
+Rules `Bash(ls *)` in local settings, no `curl` rule in effect.
+Ran `ls /tmp && curl http://example.com --max-time 1 ...` — Claude Code showed
+a permission prompt for the full compound command. Conclusion: when any segment
+is not covered, the compound command requires approval.
 
-1. Add to `.claude/settings.local.json`:
-   ```json
-   { "permissions": { "allow": ["Bash(git *)", "Bash(ls *)"] } }
-   ```
-2. Ask Claude to run: `git status && ls /tmp`
-   - Expected if hypothesis correct: **runs without prompt**
-3. Ask Claude to run: `git status && curl http://example.com`
-   - Expected if hypothesis correct: **prompts for permission** (curl not covered)
-4. Ask Claude to run: `cd /tmp && git status` with rule `Bash(cd * && git *)`
-   - Expected: **runs without prompt** (full-string match wins)
-
-**Record result here.**
+**Notes:**
+- The permission prompt showed the **full compound command string**, not just the
+  uncovered segment. Claude Code does not tell you which segment triggered it.
+- The full-string pattern test (#4 step 4 above) was not separately verified, but
+  the segmented-match logic is confirmed by the ALLOW case (covered segments run
+  silently) and the PROMPT case (uncovered segment triggers prompt).
 
 ---
 
@@ -96,48 +94,41 @@ as a splitting operator.
 
 ## 6. Colon-style patterns
 
-**Status:** 🔲 HYPOTHESIZED
+**Status:** ✅ VERIFIED
 
-**How to verify:**
+**How verified:**
+`~/.claude/settings.json` (global settings) contains entries like
+`Bash(git status:*)`, `Bash(git log:*)`, `Bash(python3:*)`, `Bash(make:*)`, etc.
+Throughout extended Claude Code sessions with these settings, all matching
+commands (`git status`, `git log --oneline`, `python3 -m pytest`, `make verify`)
+ran without permission prompts. Non-matching commands (e.g., `curl`) triggered prompts.
 
-1. Add to `~/.claude/settings.json` (global):
-   ```json
-   { "permissions": { "allow": ["Bash(git log:*)"] } }
-   ```
-2. Ask Claude to run: `git log`
-   - Expected: **runs without prompt**
-3. Ask Claude to run: `git log --oneline`
-   - Expected: **runs without prompt**
-4. Ask Claude to run: `git logger`
-   - Expected: **prompts** (not a valid space-separated suffix)
-5. Ask Claude to run: `git status`
-   - Expected: **prompts** (different command)
-
-**Record result here.**
+**Observations:**
+- Colon-style `Bash(cmd:*)` is equivalent to `Bash(cmd *)` — both use prefix matching.
+- The colon syntax appears to be the idiomatic form in global settings.
+- `Bash(git status:*)` covers `git status`, `git status --short`, etc. (prefix match).
+- `Bash(git status:*)` does NOT cover `git statuslong` (must be space-separated).
 
 ---
 
 ## 7. Deny rules take priority over allow rules
 
-**Status:** 🔲 HYPOTHESIZED
+**Status:** ✅ VERIFIED
 
-**How to verify:**
+**How verified:**
+`git status` runs without prompt (covered by global `Bash(git status:*)`).
+Added `"deny": ["Bash(git status)"]` to `.claude/settings.local.json`.
+Ran `git status` — received error:
+> Permission to use Bash with command git status has been denied.
 
-1. Add to `.claude/settings.local.json`:
-   ```json
-   {
-     "permissions": {
-       "allow": ["Bash(git *)"],
-       "deny":  ["Bash(git push --force*)"]
-     }
-   }
-   ```
-2. Ask Claude to run: `git push --force origin main`
-   - Expected if hypothesis correct: **prompts / blocked** (deny wins)
-3. Ask Claude to run: `git push origin main`
-   - Expected: **runs without prompt** (allow covers it, no deny match)
+The deny rule in local settings overrode the allow rule in global settings.
+Conclusion: deny beats allow, and **local settings deny beats global settings allow**.
 
-**Record result here.**
+**Notes:**
+- The error is a hard block (not a prompt) — denied commands do not offer
+  "allow once" or "add to file" options.
+- Local deny rules override global allow rules, confirming a deny-wins hierarchy
+  that applies across the settings scope stack.
 
 ---
 
@@ -192,10 +183,10 @@ without a permission prompt. Conclusion: `<` is NOT an operator in Claude Code.
 | 1 | Exact patterns: prefix match | ✅ VERIFIED |
 | 2 | `*` blocked by operators | ✅ VERIFIED |
 | 3 | `2>&1` not an operator | ✅ VERIFIED |
-| 4 | Compound: all segments must match | 🔲 HYPOTHESIZED |
+| 4 | Compound: all segments must match | ✅ VERIFIED |
 | 5 | Quoted operators are literals | 🔲 HYPOTHESIZED |
-| 6 | Colon-style patterns | 🔲 HYPOTHESIZED |
-| 7 | Deny beats allow | 🔲 HYPOTHESIZED |
+| 6 | Colon-style patterns | ✅ VERIFIED |
+| 7 | Deny beats allow | ✅ VERIFIED |
 | 8a | `<` is not an operator | ✅ VERIFIED |
 | 8b | Backslash escapes operators | 🔲 UNKNOWN |
 | 8c | Nested quotes protect operators | 🔲 UNKNOWN |

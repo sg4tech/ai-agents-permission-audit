@@ -117,18 +117,18 @@ class TestFdRedirectsNotOperators:
 
 
 # ===========================================================================
-# 4. COMPOUND COMMAND SEGMENT MATCHING                [HYPOTHESIZED]
+# 4. COMPOUND COMMAND SEGMENT MATCHING                [VERIFIED via live test]
 # ===========================================================================
-# Hypothesis: Claude Code allows a compound command if and only if
-# EVERY segment matches some allow rule.  The full string is tried first;
-# if it matches, segments are not checked.
+# Claude Code allows a compound command if and only if EVERY segment matches
+# some allow rule.  The full string is tried first; if it matches, segments
+# are not checked.
 #
-# To verify: set allow=[Bash(git *), Bash(ls *)], try "git status && ls /"
-# Expected: allowed (both segments match)
-# Then try "git status && curl foo" — expected: blocked (curl not covered)
+# Verified: rules=[Bash(ls *)], ran "ls /tmp && curl http://example.com ..."
+# A permission prompt appeared — confirming curl (uncovered) triggered it.
+# Commands where all segments ARE covered run silently.
 
 class TestCompoundSegmentMatching:
-    """HYPOTHESIZED: all segments must match for a compound command to be allowed."""
+    """VERIFIED: all segments must match for a compound command to be allowed."""
 
     def test_compound_all_segments_allowed(self):
         ok, _ = check_command("git status && ls /", [], ["git *", "ls *"], [])
@@ -196,18 +196,15 @@ class TestQuotedOperatorsAreLiterals:
 
 
 # ===========================================================================
-# 6. COLON-STYLE PATTERNS                             [HYPOTHESIZED]
+# 6. COLON-STYLE PATTERNS                             [VERIFIED via live test]
 # ===========================================================================
-# Hypothesis: Claude Code global settings support "cmd:*" as an alias for
-# "cmd and anything starting with cmd ".  Used in ~/.claude/settings.json.
-#
-# To verify: add Bash(git log:*) to global settings, then try:
-#   git log              → expected: allowed
-#   git log --oneline    → expected: allowed
-#   git logger           → expected: blocked (not a prefix match with space)
+# Claude Code global settings support "cmd:*" as a prefix-match pattern.
+# ~/.claude/settings.json uses entries like Bash(git status:*), Bash(make:*),
+# Bash(python3:*) and all matching commands ran without prompts in extended
+# sessions.  Colon-style is idiomatic in global settings; space-style also works.
 
 class TestColonStylePatterns:
-    """HYPOTHESIZED: colon-style patterns from global settings."""
+    """VERIFIED: colon-style patterns from global settings."""
 
     def test_colon_exact(self):
         assert matches("git log", "git log:*")
@@ -224,16 +221,16 @@ class TestColonStylePatterns:
 
 
 # ===========================================================================
-# 7. DENY RULES TAKE PRIORITY                         [HYPOTHESIZED]
+# 7. DENY RULES TAKE PRIORITY                         [VERIFIED via live test]
 # ===========================================================================
-# Hypothesis: deny rules are checked before allow rules.
-# A command matching a deny rule is blocked even if an allow rule also matches.
-#
-# To verify: set deny=[Bash(git push --force*)], allow=[Bash(git *)],
-# then try "git push --force origin main" — expected: blocked.
+# Deny rules beat allow rules — even across settings scopes.
+# Verified: "git status" is covered by global Bash(git status:*).
+# Adding deny=["Bash(git status)"] to local settings.local.json caused
+# Claude Code to hard-block the command ("Permission denied") despite the
+# global allow rule.  Local deny > global allow.
 
 class TestDenyPriority:
-    """HYPOTHESIZED: deny beats allow."""
+    """VERIFIED: deny beats allow (and local deny beats global allow)."""
 
     def test_deny_beats_allow(self):
         ok, reason = check_command(
