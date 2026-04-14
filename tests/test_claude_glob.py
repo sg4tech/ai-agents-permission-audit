@@ -26,7 +26,7 @@ class TestGlobToRegex:
         assert glob_to_regex("git *").match("git log --oneline --graph")
 
     def test_star_matches_middle(self):
-        assert glob_to_regex("cd * && git *").match("cd /tmp && git status")
+        assert glob_to_regex("cd * && git *").match("cd mydir && git status")
 
     def test_star_empty_match(self):
         """* can match the empty string."""
@@ -67,15 +67,64 @@ class TestFdRedirects:
     def test_2_redirect_stdout(self):
         assert glob_to_regex("make *").match("make verify 2>&1")
 
-    def test_2_redirect_devnull(self):
-        assert glob_to_regex("grep *").match("grep foo file 2>/dev/null")
+    def test_2_redirect_devnull_requires_double_star(self):
+        """2>/dev/null contains a slash — * won't match it, ** will."""
+        assert not glob_to_regex("grep *").match("grep foo file 2>/dev/null")
+        assert glob_to_regex("grep **").match("grep foo file 2>/dev/null")
 
-    def test_1_redirect(self):
-        assert glob_to_regex("cmd *").match("cmd arg 1>/dev/null")
+    def test_1_redirect_requires_double_star(self):
+        """1>/dev/null contains a slash — * won't match it, ** will."""
+        assert not glob_to_regex("cmd *").match("cmd arg 1>/dev/null")
+        assert glob_to_regex("cmd **").match("cmd arg 1>/dev/null")
 
     def test_mixed_fd_and_pipe(self):
         """2>&1 is ok but | still blocks."""
         assert not glob_to_regex("make *").match("make verify 2>&1 | tail -3")
+
+
+# ---------------------------------------------------------------------------
+# Slash blocking — * must NOT cross /; ** must cross /
+# ---------------------------------------------------------------------------
+
+class TestSlashBlocking:
+    """VERIFIED: * does not match /; ** does match / in Claude Code permission patterns.
+
+    Confirmed via always-deny methodology:
+    - ``cat README.md`` auto-approved by ``Bash(cat *)``
+    - ``cat /tmp/file | python3 -c "..."`` prompted (slash in arg) with ``Bash(cat *)``
+    - ``cat /Users/viktor/.claude/settings.json | python3 -c "..."`` auto-approved with ``Bash(cat /Users/viktor/**)``
+    """
+
+    def test_star_does_not_match_absolute_path(self):
+        """VERIFIED: * does not match / — absolute path arg not covered by cat *."""
+        assert not glob_to_regex("cat *").match("cat /etc/hosts")
+
+    def test_star_matches_relative_path(self):
+        """VERIFIED: * matches relative path (no slash)."""
+        assert glob_to_regex("cat *").match("cat README.md")
+
+    def test_star_does_not_match_slash_in_middle(self):
+        assert not glob_to_regex("ls *").match("ls /tmp")
+
+    def test_double_star_matches_absolute_path(self):
+        """VERIFIED: ** matches / — covers absolute path args."""
+        assert glob_to_regex("cat **").match("cat /etc/hosts")
+
+    def test_double_star_matches_nested_path(self):
+        """VERIFIED: ** matches multiple path components."""
+        assert glob_to_regex("cat **").match("cat /Users/viktor/.claude/settings.json")
+
+    def test_double_star_still_blocks_operators(self):
+        """** does not cross shell operators."""
+        assert not glob_to_regex("cat **").match("cat file | grep foo")
+
+    def test_star_matches_path_component_after_slash(self):
+        """* matches a single path component (no slash in it)."""
+        assert glob_to_regex(".venv/bin/*").match(".venv/bin/pytest")
+
+    def test_star_does_not_match_nested_path_component(self):
+        """* does not cross / — nested paths require **."""
+        assert not glob_to_regex(".venv/bin/*").match(".venv/bin/python3/nested")
 
 
 # ---------------------------------------------------------------------------
@@ -169,18 +218,19 @@ class TestMatches:
     def test_2_redirect_1(self):
         assert matches("make verify 2>&1", "make *")
 
-    def test_2_redirect_devnull(self):
-        assert matches("ls foo 2>/dev/null", "ls *")
+    def test_2_redirect_devnull_requires_double_star(self):
+        assert not matches("ls foo 2>/dev/null", "ls *")
+        assert matches("ls foo 2>/dev/null", "ls **")
 
     # --- Quoted operators pass through ---
     def test_pipe_in_double_quotes(self):
-        assert matches('grep -n "^def \\|^class " src/foo.py', "grep *")
+        assert matches('grep -n "^def \\|^class " foo.py', "grep *")
 
     def test_semicolon_in_double_quotes(self):
         assert matches('.venv/bin/python -c "import foo; print(1)"', ".venv/bin/*")
 
     def test_pipe_in_single_quotes(self):
-        assert matches("grep -n '^def |^class ' src/foo.py", "grep *")
+        assert matches("grep -n '^def |^class ' foo.py", "grep *")
 
     def test_semicolon_in_single_quotes(self):
         assert matches(".venv/bin/python -c 'import foo; print(1)'", ".venv/bin/*")
@@ -193,14 +243,19 @@ class TestMatches:
 
     # --- Compound patterns with literal operators ---
     def test_compound_pattern(self):
-        assert matches("cd /tmp && git status", "cd * && git *")
+        assert matches("cd mydir && git status", "cd * && git *")
+
+    def test_compound_pattern_with_absolute_path(self):
+        """cd /tmp requires ** since * does not match /."""
+        assert not matches("cd /tmp && git status", "cd * && git *")
+        assert matches("cd /tmp && git status", "cd ** && git *")
 
     def test_compound_pattern_no_match(self):
-        assert not matches("cd /tmp && ls", "cd * && git *")
+        assert not matches("cd mydir && ls", "cd * && git *")
 
     def test_compound_three_parts(self):
         assert matches(
-            "cd /tmp && git add . && git commit -m 'x'",
+            "cd mydir && git add . && git commit -m 'x'",
             "cd * && git * && git *",
         )
 

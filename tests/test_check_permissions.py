@@ -169,8 +169,12 @@ class TestIsNoise:
 # ---------------------------------------------------------------------------
 
 class TestCheckCommand:
-    DENY = ["git push --force*", "rm -rf /*"]
-    ALLOW = ["git *", "make *", "ls *", "grep *", "cd * && git *"]
+    # rm -rf /** uses ** so the deny rule catches nested absolute paths like
+    # /tmp/subdir, not just top-level paths like /important.
+    # rm -rf /* would only deny single-component paths (no slash in the argument
+    # after the leading /) because * does not match /.
+    DENY = ["git push --force*", "rm -rf /**"]
+    ALLOW = ["git *", "make *", "ls *", "grep *", "cd ** && git *"]
 
     def test_simple_allowed(self):
         ok, reason = check_command("git status", self.DENY, self.ALLOW, [])
@@ -210,7 +214,8 @@ class TestCheckCommand:
         assert "SEGMENTS_NOT_ALLOWED" in reason
 
     def test_global_allow(self):
-        ok, reason = check_command("curl http://example.com", self.DENY, [], ["curl *"])
+        """URL contains / — requires ** to match."""
+        ok, reason = check_command("curl http://example.com", self.DENY, [], ["curl **"])
         assert ok
         assert "global" in reason
 
@@ -219,6 +224,22 @@ class TestCheckCommand:
         ok, reason = check_command("rm -rf /important", self.DENY, ["rm *"], [])
         assert not ok
         assert "DENY" in reason
+
+    def test_deny_nested_path_requires_double_star(self):
+        """rm -rf /** catches nested paths; rm -rf /* does not (no slash in *).
+
+        This documents a real footgun: deny rule writers who use rm -rf /* expect
+        to block ALL absolute recursive deletes, but * does not match /, so
+        rm -rf /tmp/subdir would return NO_MATCH with rm -rf /* and be silently
+        allowed if there is a matching allow rule. Use rm -rf /** to catch all.
+        """
+        # Double-star deny (our DENY constant): catches nested path.
+        ok, reason = check_command("rm -rf /tmp/subdir", self.DENY, ["rm **"], [])
+        assert not ok
+        assert "DENY" in reason
+        # Single-star deny: does NOT catch nested path — silently passes through.
+        ok, _ = check_command("rm -rf /tmp/subdir", ["rm -rf /*"], ["rm **"], [])
+        assert ok  # dangerous: deny missed the nested path
 
     def test_2_redirect_allowed(self):
         ok, _ = check_command("make verify 2>&1", self.DENY, self.ALLOW, [])
