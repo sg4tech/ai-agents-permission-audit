@@ -8,9 +8,10 @@ and checks each against ``allow`` / ``deny`` rules from
 Claude Code matching semantics
 ------------------------------
 ``*`` in permission patterns does NOT match shell operators
-(``&&``, ``||``, ``|``, ``;``, ``>``).  Claude Code splits compound
+(``&&``, ``||``, ``|``, ``;``).  Claude Code splits compound
 commands at shell operators and matches each segment independently.
 A compound command is allowed only when **every** segment is allowed.
+Redirects (``>``, ``>>``, ``<``, ``2>&1``) are **not** operators.
 
 Usage::
 
@@ -63,9 +64,9 @@ def load_rules(
 def _split_command(cmd: str) -> list[str]:
     """Split *cmd* at unquoted shell operators, respecting quotes.
 
-    Recognized operators: ``&&``, ``||``, ``|``, ``;``, ``>``, ``>>``.
-    File-descriptor redirects (``2>&1``, ``2>/dev/null``) are **not**
-    treated as operators.
+    Recognized operators: ``&&``, ``||``, ``|``, ``;``.
+    Redirects (``>``, ``>>``, ``<``, ``2>&1``, ``2>/dev/null``) are **not**
+    operators and do not split the command.
     """
     segments: list[str] = []
     current: list[str] = []
@@ -98,6 +99,13 @@ def _split_command(cmd: str) -> list[str]:
             i += 1
             continue
 
+        # Backslash escapes the next character outside quotes.
+        if c == "\\" and not in_single and i + 1 < len(cmd):
+            current.append(c)
+            current.append(cmd[i + 1])
+            i += 2
+            continue
+
         # && or ||
         if c in ("&", "|") and i + 1 < len(cmd) and cmd[i + 1] == c:
             _flush()
@@ -114,18 +122,6 @@ def _split_command(cmd: str) -> list[str]:
         if c == ";":
             _flush()
             i += 1
-            continue
-
-        # > or >> — but NOT fd redirects (digit before >).
-        if c == ">":
-            if current and current[-1].isdigit():
-                current.append(c)
-                i += 1
-                continue
-            _flush()
-            i += 1
-            if i < len(cmd) and cmd[i] == ">":
-                i += 1
             continue
 
         current.append(c)
@@ -156,6 +152,14 @@ def check_command(
        matches some allow rule.
 
     Returns ``(is_allowed, reason)``.
+
+    Known limitation: Claude Code auto-approves bare utility names (``ls``,
+    ``grep``, ``cat``, ``wc``, etc.) without any allow rule.  This function
+    does NOT model that — it requires an explicit allow rule for every command.
+    As a result, bare names with no matching rule will appear as ``NO_MATCH``
+    even though Claude Code would permit them.  The full list of auto-approved
+    names is not published by Anthropic, so implementing this accurately is
+    not feasible.
     """
     # Deny: full string.
     for p in deny:

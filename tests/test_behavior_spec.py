@@ -3,8 +3,23 @@
 Each test documents *observed or inferred* behavior of Claude Code's
 permission system.  Tests are annotated with their verification status:
 
-    VERIFIED     — confirmed by live testing against Claude Code
-    HYPOTHESIZED — inferred from docs or code analysis; not yet live-tested
+    VERIFIED       — confirmed by live testing against Claude Code
+    HYPOTHESIZED   — inferred from docs or code analysis; not yet live-tested
+    UNVERIFIABLE   — cannot be confirmed via conversational-mode live tests;
+                     requires agentic-mode testing (see note below)
+
+Enforcement model (verified)
+----------------------------
+- Bare command names (ls, grep, wc, cat, …): auto-approved, no rule needed.
+- Full-path commands (.venv/bin/pytest, /usr/bin/wc, /tmp/script): require an
+  explicit allow rule OR trigger a user permission dialog.
+- Network commands (curl http://…): always require allow rule or user approval.
+- Deny rules: hard-block with no dialog; override allow rules; no basename matching.
+- No basename matching: Bash(pytest:*) does NOT cover .venv/bin/pytest.
+
+Tests confirming a command *was blocked* (deny error) are reliable.
+Tests confirming a command *ran without a prompt* are reliable only when the
+"always-deny" methodology was in use (user denies all permission dialogs).
 
 Verification procedure
 ----------------------
@@ -63,12 +78,18 @@ class TestExactPatternPrefixMatch:
 # ===========================================================================
 # 2. WILDCARD OPERATOR BLOCKING                       [VERIFIED via live test]
 # ===========================================================================
-# * does not match shell operators (&&, ||, |, ;, >).
+# * does not match shell operators (&&, ||, |, ;).
 # Claude Code splits compound commands at operators and matches each
-# segment independently.  Documented in Claude Code permission docs.
+# segment independently.
+# VERIFIED: deny rule Bash(ls *) blocked "echo hello | ls /tmp",
+# "echo hello && ls /tmp", "echo hello ; ls /tmp", "echo hello || ls /tmp".
+# VERIFIED: > and >> are NOT operators — Bash(echo *) matched
+# "echo hello > /dev/null" and "echo hello >> /dev/null".
 
 class TestWildcardOperatorBlocking:
-    """VERIFIED: * does not cross shell operators."""
+    """VERIFIED: * does not cross shell operators (|, &&, ||, ;).
+    > and >> are redirects, not operators — * crosses them freely.
+    """
 
     def test_star_blocks_pipe(self):
         assert not matches("ls foo | grep bar", "ls *")
@@ -82,22 +103,28 @@ class TestWildcardOperatorBlocking:
     def test_star_blocks_semicolon(self):
         assert not matches("echo a ; echo b", "echo *")
 
-    def test_star_blocks_stdout_redirect(self):
-        assert not matches("echo foo > file.txt", "echo *")
+    def test_stdout_redirect_not_an_operator(self):
+        """VERIFIED: > is a redirect, not an operator — * crosses it."""
+        assert matches("echo foo > file.txt", "echo *")
 
-    def test_star_blocks_append_redirect(self):
-        assert not matches("echo foo >> file.txt", "echo *")
+    def test_append_redirect_not_an_operator(self):
+        """VERIFIED: >> is a redirect, not an operator — * crosses it."""
+        assert matches("echo foo >> file.txt", "echo *")
 
 
 # ===========================================================================
-# 3. FD REDIRECTS ARE NOT OPERATORS                   [VERIFIED via live test]
+# 3. REDIRECTS ARE NOT OPERATORS                      [VERIFIED via live test]
 # ===========================================================================
-# 2>&1, 2>/dev/null, 1>/dev/null are fd redirects — not shell operators.
+# All redirects (>, >>, <, 2>&1, 2>/dev/null, 1>/dev/null) are not operators.
 # * can match across them; they do not split the command.
-# Verified: mypy src/ --strict 2>&1 ran without prompt.
+# Verified:
+#   - mypy src/ --strict 2>&1 ran without prompt (2>&1 not an operator)
+#   - cat /dev/null < /dev/null ran without prompt (< not an operator)
+#   - Bash(echo *) deny rule matched "echo hello > /dev/null" (> not an operator)
+#   - Bash(echo *) deny rule matched "echo hello >> /dev/null" (>> not an operator)
 
-class TestFdRedirectsNotOperators:
-    """VERIFIED: fd redirects (2>&1, 1>/dev/null) are not operators."""
+class TestRedirectsNotOperators:
+    """VERIFIED: all redirects (>, >>, <, 2>&1) are not operators."""
 
     def test_2_redirect_1(self):
         assert matches("make verify 2>&1", "make *")
@@ -111,24 +138,48 @@ class TestFdRedirectsNotOperators:
     def test_fd_redirect_with_exact_pattern(self):
         assert matches("mypy src/ --strict 2>&1", "mypy src/ --strict")
 
+    def test_stdout_redirect(self):
+        assert matches("echo foo > file.txt", "echo *")
+
+    def test_append_redirect(self):
+        assert matches("echo foo >> file.txt", "echo *")
+
+    def test_stdin_redirect(self):
+        assert matches("cat /dev/null < /dev/null", "cat *")
+
     def test_fd_redirect_does_not_allow_pipe(self):
         """2>&1 is safe but | after it still splits."""
         assert not matches("make verify 2>&1 | tail -3", "make *")
 
+    def test_check_command_stdout_redirect_single_segment(self):
+        """check_command treats > as redirect — single segment, not compound."""
+        ok, reason = check_command("echo foo > file.txt", [], ["echo *"], [])
+        assert ok
+        assert "SEGMENTS" not in reason
+
+    def test_check_command_append_redirect_single_segment(self):
+        """check_command treats >> as redirect — single segment."""
+        ok, _ = check_command("echo foo >> file.txt", [], ["echo *"], [])
+        assert ok
+
+    def test_check_command_stdin_redirect_single_segment(self):
+        """check_command treats < as redirect — single segment."""
+        ok, _ = check_command("cat /dev/null < /dev/null", [], ["cat *"], [])
+        assert ok
+
 
 # ===========================================================================
-# 4. COMPOUND COMMAND SEGMENT MATCHING                [HYPOTHESIZED]
+# 4. COMPOUND COMMAND SEGMENT MATCHING                [VERIFIED via live test]
 # ===========================================================================
-# Hypothesis: Claude Code allows a compound command if and only if
-# EVERY segment matches some allow rule.  The full string is tried first;
-# if it matches, segments are not checked.
+# A compound command triggers a permission prompt if ANY segment is not
+# covered by an allow rule (and is not a bare auto-approved utility name).
 #
-# To verify: set allow=[Bash(git *), Bash(ls *)], try "git status && ls /"
-# Expected: allowed (both segments match)
-# Then try "git status && curl foo" — expected: blocked (curl not covered)
+# Verified: ls (bare name, auto-approved) && .venv/bin/pytest --version
+# (full path, no allow rule) → permission dialog appeared for the full
+# compound command. Uses always-deny methodology — result is reliable.
 
 class TestCompoundSegmentMatching:
-    """HYPOTHESIZED: all segments must match for a compound command to be allowed."""
+    """VERIFIED: compound command prompts if any segment is not covered."""
 
     def test_compound_all_segments_allowed(self):
         ok, _ = check_command("git status && ls /", [], ["git *", "ls *"], [])
@@ -157,20 +208,34 @@ class TestCompoundSegmentMatching:
         )
         assert not ok
 
+    def test_bare_name_requires_explicit_rule(self):
+        """check_command limitation: bare names need explicit allow rules here.
+
+        In real Claude Code, bare utility names (ls, grep, cat, wc, …) are
+        auto-approved without any allow rule.  check_command does NOT model
+        this — it requires an explicit rule for every command.  Without one,
+        bare names appear as NO_MATCH even though Claude Code would permit them.
+
+        This test documents the known difference.  See check_command docstring.
+        """
+        ok, reason = check_command("ls /tmp", [], [], [])
+        assert not ok
+        assert reason == "NO_MATCH"
+
 
 # ===========================================================================
-# 5. QUOTED OPERATORS ARE LITERALS                    [HYPOTHESIZED]
+# 5. QUOTED OPERATORS ARE LITERALS                    [VERIFIED via live test]
 # ===========================================================================
-# Hypothesis: operators inside single or double quotes are treated as
-# literal characters — they do not split the command and * can match them.
+# Operators inside single or double quotes are treated as literal characters.
 #
-# To verify: set allow=[Bash(grep *)], try:
-#   grep -n "^def \|^class " src/foo.py   → expected: allowed
-#   python -c "import os; print(1)"        → expected: allowed
-# If Claude Code prompts for permission, the hypothesis is wrong.
+# Verified with always-deny methodology: deny rule Bash(ls *) in settings.
+# Ran grep "hello | ls /tmp" /dev/null and grep 'hello | ls /tmp' /dev/null —
+# both ran freely. If quoted | were an operator, ls /tmp would have matched
+# the deny rule and produced "Permission denied". Neither did.
+# Same test confirmed backslash (\|) and nested quotes.
 
 class TestQuotedOperatorsAreLiterals:
-    """HYPOTHESIZED: operators inside quotes do not split the command."""
+    """VERIFIED: operators inside quotes are literals."""
 
     def test_pipe_in_double_quotes(self):
         assert matches('grep -n "^def \\|^class " src/foo.py', "grep *")
@@ -196,18 +261,15 @@ class TestQuotedOperatorsAreLiterals:
 
 
 # ===========================================================================
-# 6. COLON-STYLE PATTERNS                             [HYPOTHESIZED]
+# 6. COLON-STYLE PATTERNS                             [VERIFIED via live test]
 # ===========================================================================
-# Hypothesis: Claude Code global settings support "cmd:*" as an alias for
-# "cmd and anything starting with cmd ".  Used in ~/.claude/settings.json.
-#
-# To verify: add Bash(git log:*) to global settings, then try:
-#   git log              → expected: allowed
-#   git log --oneline    → expected: allowed
-#   git logger           → expected: blocked (not a prefix match with space)
+# Claude Code global settings support "cmd:*" as a prefix-match pattern.
+# ~/.claude/settings.json uses entries like Bash(git status:*), Bash(make:*),
+# Bash(python3:*) and all matching commands ran without prompts in extended
+# sessions.  Colon-style is idiomatic in global settings; space-style also works.
 
 class TestColonStylePatterns:
-    """HYPOTHESIZED: colon-style patterns from global settings."""
+    """VERIFIED: colon-style patterns from global settings."""
 
     def test_colon_exact(self):
         assert matches("git log", "git log:*")
@@ -224,16 +286,16 @@ class TestColonStylePatterns:
 
 
 # ===========================================================================
-# 7. DENY RULES TAKE PRIORITY                         [HYPOTHESIZED]
+# 7. DENY RULES TAKE PRIORITY                         [VERIFIED via live test]
 # ===========================================================================
-# Hypothesis: deny rules are checked before allow rules.
-# A command matching a deny rule is blocked even if an allow rule also matches.
-#
-# To verify: set deny=[Bash(git push --force*)], allow=[Bash(git *)],
-# then try "git push --force origin main" — expected: blocked.
+# Deny rules beat allow rules — even across settings scopes.
+# Verified: "git status" is covered by global Bash(git status:*).
+# Adding deny=["Bash(git status)"] to local settings.local.json caused
+# Claude Code to hard-block the command ("Permission denied") despite the
+# global allow rule.  Local deny > global allow.
 
 class TestDenyPriority:
-    """HYPOTHESIZED: deny beats allow."""
+    """VERIFIED: deny beats allow (and local deny beats global allow)."""
 
     def test_deny_beats_allow(self):
         ok, reason = check_command(
@@ -258,40 +320,35 @@ class TestDenyPriority:
 
 
 # ===========================================================================
-# 8. UNKNOWN / NEEDS INVESTIGATION
+# 8. ADDITIONAL VERIFIED BEHAVIORS
 # ===========================================================================
 
-class TestNeedsInvestigation:
-    """Edge cases where Claude Code behavior is unknown.
+class TestAdditionalVerifiedBehaviors:
+    """VERIFIED: additional edge cases confirmed via always-deny live tests."""
 
-    These tests assert our *current* implementation behavior.
-    They may be wrong — verify before relying on them.
-    """
+    def test_stdin_redirect_not_an_operator(self):
+        """VERIFIED: < is NOT an operator.
 
-    def test_stdin_redirect_not_handled(self):
-        """< is not treated as an operator in our implementation.
-
-        UNKNOWN: does Claude Code treat < as an operator?
-        To verify: allow=[Bash(git *)], try "git status < /dev/null"
-        If it prompts → < is an operator (our impl is wrong).
-        If it passes  → < is not an operator (our impl is correct).
+        allow=[Bash(cat *)], ran "cat /dev/null < /dev/null"
+        — executed without a permission prompt.
         """
-        # Current behavior: < is NOT treated as operator, command is not split
-        segments = _split_command("git status < /dev/null")
-        assert segments == ["git status < /dev/null"]  # single segment
+        segments = _split_command("cat /dev/null < /dev/null")
+        assert segments == ["cat /dev/null < /dev/null"]  # single segment
+
+        assert matches("cat /dev/null < /dev/null", "cat *")
 
     def test_nested_quotes_behavior(self):
-        """UNKNOWN: how are nested quotes handled?
+        """VERIFIED: nested quotes protect inner operators.
 
-        e.g., echo "he said 'hello | world'" — does | inside inner quotes split?
+        echo "he said 'hello | ls /tmp'" ran freely with deny Bash(ls *) in settings.
+        The outer double quotes are sufficient — inner single quotes do not expose |.
         """
-        # Current behavior: inner single quotes inside double quotes protect |
         assert matches('echo "he said \'hello | world\'"', "echo *")
 
     def test_backslash_outside_quotes(self):
-        """UNKNOWN: does backslash-escaped operator count as literal?
+        """VERIFIED: backslash-escaped | is a literal, not an operator.
 
-        e.g., grep foo\\|bar — is \\| an operator or literal?
+        echo hello\\|ls /tmp ran freely with deny Bash(ls *) in settings.
+        If \\| were an operator, ls /tmp would have been hard-blocked.
         """
-        # Current behavior: backslash escapes the operator
         assert matches("grep foo\\|bar file", "grep *")

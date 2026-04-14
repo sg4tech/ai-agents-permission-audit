@@ -2,7 +2,7 @@
 
 Audit tools for [Claude Code](https://claude.ai/code) permission rules.
 
-Claude Code's `*` wildcard in `Bash(...)` permission patterns does **not** match shell operators (`&&`, `||`, `|`, `;`, `>`). This means a rule like `Bash(git *)` does **not** cover `git status && git diff` — Claude Code splits compound commands at operators and matches each segment independently.
+Claude Code's `*` wildcard in `Bash(...)` permission patterns does **not** match shell operators (`&&`, `||`, `|`, `;`). This means a rule like `Bash(git *)` does **not** cover `git status && git diff` — Claude Code splits compound commands at operators and matches each segment independently.
 
 This toolset helps you:
 
@@ -127,7 +127,7 @@ Operators inside quotes (`"a|b"`) or after backslash (`\|`) are treated as liter
 pytest
 ```
 
-93 unit tests covering the glob matcher and permission checker.
+188 unit tests covering the glob matcher, permission checker, and behavioral specification.
 
 ## License
 
