@@ -19,7 +19,7 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]" -q
 
 ## Key invariant
 
-`*` in Claude Code permission patterns does **not** match shell operators (`&&`, `||`, `|`, `;`, `>`).
+`*` in Claude Code permission patterns does **not** match shell operators (`&&`, `||`, `|`, `;`).
 
 - `git *` matches `git status` but NOT `git status && git diff`
 - Compound commands are split at operators; every segment must match independently
@@ -53,8 +53,11 @@ contradicts a hypothesis), update both files.
 
 Known verified behaviors:
 - Exact patterns use **prefix matching**: `Bash(git status)` also covers `git status --short`
-- `*` does **not** cross shell operators (`&&`, `||`, `|`, `;`, `>`)
-- `2>&1` and other fd redirects are **not** operators — `*` matches across them
+- `*` does **not** cross shell operators (`&&`, `||`, `|`, `;`)
+- `>`, `>>`, `<`, `2>&1`, `2>/dev/null` are **not** operators — `*` matches across all redirects
+- Operators inside quotes (`"a|b"`, `'a;b'`) or after backslash (`\|`) are literals
+- Colon-style patterns (`Bash(git status:*)`) are equivalent to space-style (`Bash(git status *)`)
+- Deny rules hard-block with no dialog; local deny beats global allow
 
 ## What not to do
 
