@@ -320,22 +320,17 @@ class TestDenyPriority:
 
 
 # ===========================================================================
-# 8. UNKNOWN / NEEDS INVESTIGATION
+# 8. ADDITIONAL VERIFIED BEHAVIORS
 # ===========================================================================
 
-class TestNeedsInvestigation:
-    """Edge cases where Claude Code behavior is unknown.
-
-    These tests assert our *current* implementation behavior.
-    They may be wrong — verify before relying on them.
-    """
+class TestAdditionalVerifiedBehaviors:
+    """VERIFIED: additional edge cases confirmed via always-deny live tests."""
 
     def test_stdin_redirect_not_an_operator(self):
-        """< is NOT an operator — verified by live test.
+        """VERIFIED: < is NOT an operator.
 
-        VERIFIED: allow=[Bash(cat *)], ran "cat /dev/null < /dev/null"
+        allow=[Bash(cat *)], ran "cat /dev/null < /dev/null"
         — executed without a permission prompt.
-        Our implementation is correct: < does not split the command.
         """
         segments = _split_command("cat /dev/null < /dev/null")
         assert segments == ["cat /dev/null < /dev/null"]  # single segment
