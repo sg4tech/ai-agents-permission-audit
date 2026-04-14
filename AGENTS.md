@@ -19,11 +19,17 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]" -q
 
 ## Key invariants
 
-`*` in Claude Code permission patterns does **not** match shell operators (`&&`, `||`, `|`, `;`) **and does not match `/`**.
+`*` in Claude Code permission patterns does **not** match shell operators (`&&`, `||`, `|`, `;`).
+`*` does **not** match a leading `/` (absolute paths) and does **not** cross `/` mid-path,
+but **does** match a trailing `/` on a directory argument (slash immediately followed by space
+or end-of-string).
 
 - `git *` matches `git status` but NOT `git status && git diff`
-- `cat *` matches `cat README.md` but NOT `cat /etc/hosts` (slash in argument)
-- `cat **` matches `cat /Users/viktor/.claude/settings.json` (`**` crosses `/`)
+- `cat *` matches `cat README.md` but NOT `cat /etc/hosts` (leading slash)
+- `.venv/bin/*` matches `.venv/bin/pytest` but NOT `.venv/bin/sub/pytest` (mid-path slash)
+- `.venv/bin/* *` matches `.venv/bin/pytest tests/ -q` (`tests/` has a trailing slash) ✓
+- `grep *` does NOT match `grep foo 2>/dev/null` (slash followed by `d`, not space)
+- `cat **` matches `cat /Users/viktor/.claude/settings.json` (`**` crosses `/` freely)
 - Compound commands are split at operators; every segment must match independently
 - A compound command is auto-approved only when **every** segment is covered — verified both directions:
   - Uncovered segment → prompt (verified via always-deny)
@@ -100,3 +106,8 @@ Known limitation: slow auto-approved commands (e.g. `npm install`) will be miscl
 - Do not add external runtime dependencies — the tool must work with stdlib only
 - Do not change `*` matching to cross shell operators — that would break the core semantics
 - Do not assume `settings.local.json` exists — both settings files are optional
+- **Do not change `claude_glob.py` matching logic based on observation or hypothesis alone.**
+  All changes to `_STAR`, `_DOUBLE_STAR`, or operator handling require prior always-deny
+  live verification (fresh session, single rule, deny all dialogs).  Same rule applies to
+  flipping UNKNOWN → HYPOTHESIZED → VERIFIED annotations in `test_behavior_spec.py`.
+  Implement only after the user reports the verified result.

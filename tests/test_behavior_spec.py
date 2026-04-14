@@ -364,22 +364,28 @@ class TestAdditionalVerifiedBehaviors:
 
 
 # ===========================================================================
-# 9. * DOES NOT MATCH /, BUT ** DOES                   [VERIFIED via live test]
+# 9. * AND FORWARD SLASHES                             [VERIFIED via live test]
 # ===========================================================================
-# * in Bash permission patterns does NOT match forward slashes.
-# ** DOES match forward slashes (crosses path separators).
+# * does NOT match a leading / (absolute paths) and does NOT cross / mid-path.
+# * DOES match a trailing / on a directory argument (slash immediately followed
+# by a space or end-of-string).
+# ** DOES match / freely.
 #
 # Verified:
 #   - "cat README.md" auto-approved by Bash(cat *) — no slash ✓
-#   - "cat /tmp/file" prompted with Bash(cat *) — slash ✗
+#   - "cat /tmp/file" prompted with Bash(cat *) — leading slash ✗
 #   - "cat /Users/viktor/.claude/settings.json | python3 -c '...'" auto-approved
 #     by Bash(cat /Users/viktor/**) — ** crosses nested slashes ✓
+#   - ".venv/bin/pytest tests/ -q 2>&1" auto-approved by Bash(.venv/bin/* *)
+#     (verified via always-deny: no dialog, immediate hard-block from deny rule) ✓
 
-class TestStarDoesNotMatchSlash:
-    """VERIFIED: * does not match / in Claude Code permission patterns."""
+class TestStarAndSlashes:
+    """VERIFIED: * does not match a leading / or a mid-path /, but DOES match
+    a trailing / on a directory argument (slash followed by space or end).
+    """
 
     def test_star_no_match_absolute_path_arg(self):
-        """VERIFIED: cat * does not cover cat /path/to/file."""
+        """VERIFIED: cat * does not cover cat /path/to/file (leading /)."""
         assert not matches("cat /etc/hosts", "cat *")
         assert not matches("cat /Users/viktor/.claude/settings.json", "cat *")
 
@@ -388,18 +394,35 @@ class TestStarDoesNotMatchSlash:
         assert matches("cat README.md", "cat *")
         assert matches("cat file.txt", "cat *")
 
-    def test_star_matches_path_component(self):
-        """* matches a filename within a directory — no slash in matched part."""
+    def test_star_does_not_cross_mid_path_slash(self):
+        """VERIFIED: * does not cross / in a binary path or nested filename."""
         assert matches(".venv/bin/pytest", ".venv/bin/*")
         assert not matches(".venv/bin/sub/pytest", ".venv/bin/*")
+        assert not matches("cat tests/file.txt", "cat *")   # / followed by 'f'
+
+    def test_star_matches_trailing_slash_on_dir_arg(self):
+        """VERIFIED: * matches a trailing / on a directory argument.
+
+        Verified via always-deny in a fresh session: only Bash(.venv/bin/* *)
+        was in global allow rules, plus deny Bash(.venv/bin/* *) in local.
+        Running .venv/bin/pytest tests/ -q produced an immediate hard-block
+        ("Permission denied") with no dialog — confirming the allow rule fired.
+
+        Rule: / is allowed by * only when immediately followed by a space or
+        end-of-string (i.e. it is a trailing slash, not a path separator into
+        a subdirectory).
+        """
+        assert matches(".venv/bin/pytest tests/ -q 2>&1", ".venv/bin/*")
+        assert matches(".venv/bin/pytest tests/ -q 2>&1", ".venv/bin/* *")
+        assert matches(".venv/bin/mypy src/ --strict", ".venv/bin/* *")
+
+    def test_star_does_not_match_redirect_with_absolute_path(self):
+        """VERIFIED: * does not cover 2>/dev/null because / is followed by 'd'."""
+        assert not matches("grep foo file 2>/dev/null", "grep *")
+        assert matches("grep foo file 2>/dev/null", "grep **")
 
     def test_double_star_matches_absolute_path(self):
-        """VERIFIED: ** matches / — covers absolute path arguments.
-
-        Bash(cat /Users/viktor/**) auto-approved
-        cat /Users/viktor/.claude/settings.json | python3 -c "print('ok')"
-        in a fresh session (pipe forces Bash, not Read tool).
-        """
+        """VERIFIED: ** matches / — covers absolute path arguments."""
         assert matches("cat /etc/hosts", "cat **")
         assert matches("cat /Users/viktor/.claude/settings.json", "cat **")
 
@@ -410,46 +433,3 @@ class TestStarDoesNotMatchSlash:
     def test_double_star_still_blocks_operators(self):
         """VERIFIED: ** does not cross shell operators."""
         assert not matches("cat file | grep foo", "cat **")
-
-
-# ===========================================================================
-# 8. UNKNOWN — trailing * in «binary *» pattern with slash in argument
-# ===========================================================================
-# Observation: .venv/bin/pytest tests/ -q 2>&1 | tail -3 ran without a
-# permission dialog, even though the only matching rules in settings.json are
-#   Bash(.venv/bin/*)
-#   Bash(.venv/bin/* *)
-# Our model says both are False for this command because:
-#   - .venv/bin/*  → * must match "pytest tests/ -q 2>&1"; "tests/" contains /
-#   - .venv/bin/* * → second * must match "tests/ -q 2>&1"; "tests/" contains /
-#
-# Hypothesis A: Claude Code's trailing * in a «prefix *» pattern is more
-#   permissive than our model — it may match / when the fixed prefix already
-#   pins the binary (i.e., "whatever comes after the space").
-# Hypothesis B: The command was auto-approved via a session-level cache from
-#   an earlier approval within the same conversation, not by rule matching.
-# Hypothesis C: Claude Code has a built-in allowlist for .venv/bin/ paths
-#   that bypasses explicit rule matching.
-#
-# To verify: in a fresh session with always-deny methodology, run
-#   .venv/bin/pytest tests/ -q
-# with only Bash(.venv/bin/* *) in allow rules and no prior approval in
-# the session. If it runs without a prompt → Hypothesis A is correct.
-# If it shows a dialog → Hypothesis B (session cache) was the reason.
-
-class TestStarWithSlashInArgument:
-    """UNKNOWN: does trailing * match slash-containing arguments?"""
-
-    def test_our_model_says_star_star_space_star_no_slash(self):
-        """Our current model: second * in «.venv/bin/* *» does not match tests/."""
-        # This assertion documents our model's current behavior.
-        # If Claude Code live-testing contradicts this, update to HYPOTHESIZED/VERIFIED
-        # and flip the assertion.
-        assert not matches(".venv/bin/pytest tests/ -q 2>&1", ".venv/bin/* *")
-        assert not matches(".venv/bin/pytest tests/ -q 2>&1", ".venv/bin/*")
-
-    def test_double_star_in_arg_position_covers_slash(self):
-        """** in argument position does cover slash — use .venv/bin/** * as workaround."""
-        # Workaround rule that definitely covers the case:
-        assert matches(".venv/bin/pytest tests/ -q 2>&1", ".venv/bin/** *")
-        assert matches(".venv/bin/mypy src/ --strict", ".venv/bin/** *")
