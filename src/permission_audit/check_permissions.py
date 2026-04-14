@@ -8,9 +8,10 @@ and checks each against ``allow`` / ``deny`` rules from
 Claude Code matching semantics
 ------------------------------
 ``*`` in permission patterns does NOT match shell operators
-(``&&``, ``||``, ``|``, ``;``, ``>``).  Claude Code splits compound
+(``&&``, ``||``, ``|``, ``;``).  Claude Code splits compound
 commands at shell operators and matches each segment independently.
 A compound command is allowed only when **every** segment is allowed.
+Redirects (``>``, ``>>``, ``<``, ``2>&1``) are **not** operators.
 
 Usage::
 
@@ -63,9 +64,9 @@ def load_rules(
 def _split_command(cmd: str) -> list[str]:
     """Split *cmd* at unquoted shell operators, respecting quotes.
 
-    Recognized operators: ``&&``, ``||``, ``|``, ``;``, ``>``, ``>>``.
-    File-descriptor redirects (``2>&1``, ``2>/dev/null``) are **not**
-    treated as operators.
+    Recognized operators: ``&&``, ``||``, ``|``, ``;``.
+    Redirects (``>``, ``>>``, ``<``, ``2>&1``, ``2>/dev/null``) are **not**
+    operators and do not split the command.
     """
     segments: list[str] = []
     current: list[str] = []
@@ -114,18 +115,6 @@ def _split_command(cmd: str) -> list[str]:
         if c == ";":
             _flush()
             i += 1
-            continue
-
-        # > or >> — but NOT fd redirects (digit before >).
-        if c == ">":
-            if current and current[-1].isdigit():
-                current.append(c)
-                i += 1
-                continue
-            _flush()
-            i += 1
-            if i < len(cmd) and cmd[i] == ">":
-                i += 1
             continue
 
         current.append(c)

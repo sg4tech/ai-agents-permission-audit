@@ -151,6 +151,22 @@ class TestRedirectsNotOperators:
         """2>&1 is safe but | after it still splits."""
         assert not matches("make verify 2>&1 | tail -3", "make *")
 
+    def test_check_command_stdout_redirect_single_segment(self):
+        """check_command treats > as redirect — single segment, not compound."""
+        ok, reason = check_command("echo foo > file.txt", [], ["echo *"], [])
+        assert ok
+        assert "SEGMENTS" not in reason
+
+    def test_check_command_append_redirect_single_segment(self):
+        """check_command treats >> as redirect — single segment."""
+        ok, _ = check_command("echo foo >> file.txt", [], ["echo *"], [])
+        assert ok
+
+    def test_check_command_stdin_redirect_single_segment(self):
+        """check_command treats < as redirect — single segment."""
+        ok, _ = check_command("cat /dev/null < /dev/null", [], ["cat *"], [])
+        assert ok
+
 
 # ===========================================================================
 # 4. COMPOUND COMMAND SEGMENT MATCHING                [VERIFIED via live test]

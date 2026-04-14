@@ -39,14 +39,19 @@ class TestSplitCommand:
     def test_semicolon(self):
         assert _split_command("echo a ; echo b") == ["echo a", "echo b"]
 
-    # --- Redirect ---
-    def test_stdout_redirect(self):
-        assert _split_command("echo foo > file.txt") == ["echo foo", "file.txt"]
+    # --- Redirects (NOT operators — do not split) ---
+    def test_stdout_redirect_no_split(self):
+        """VERIFIED: > is a redirect, not an operator."""
+        assert _split_command("echo foo > file.txt") == ["echo foo > file.txt"]
 
-    def test_append_redirect(self):
-        assert _split_command("echo foo >> file.txt") == ["echo foo", "file.txt"]
+    def test_append_redirect_no_split(self):
+        """VERIFIED: >> is a redirect, not an operator."""
+        assert _split_command("echo foo >> file.txt") == ["echo foo >> file.txt"]
 
-    # --- fd redirects (NOT operators) ---
+    def test_stdin_redirect_no_split(self):
+        """VERIFIED: < is a redirect, not an operator."""
+        assert _split_command("cat /dev/null < /dev/null") == ["cat /dev/null < /dev/null"]
+
     def test_2_redirect_1_no_split(self):
         assert _split_command("make verify 2>&1") == ["make verify 2>&1"]
 
@@ -58,6 +63,13 @@ class TestSplitCommand:
         assert _split_command("make verify 2>&1 | tail -3") == [
             "make verify 2>&1",
             "tail -3",
+        ]
+
+    def test_stdout_redirect_with_pipe(self):
+        """> does not split, but | after it still splits."""
+        assert _split_command("echo foo > file.txt | cat") == [
+            "echo foo > file.txt",
+            "cat",
         ]
 
     # --- Quoting ---
